@@ -35,8 +35,8 @@ A sophisticated TypeScript tool for detecting and analyzing potential centraliza
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/vilenarios/ar-io-gateway-analyzer.git
-cd ar-io-gateway-analyzer
+git clone https://github.com/vilenarios/ar-io-network-analyzer.git
+cd ar-io-network-analyzer
 ```
 
 2. Install dependencies:
@@ -55,26 +55,26 @@ npm run build
 
 ```bash
 # Run with real network data
-npm start
+npm run analyze
 
 # Run with demo data (for testing)
-npm run demo
+npm run analyze:demo
 ```
 
 ### Configuration Options
 
 ```bash
 # Skip geographic analysis (faster, avoids rate limits)
-SKIP_GEO=true npm start
+SKIP_GEO=true npm run analyze
 
 # Use specific AR.IO process ID
-npm start -- --process-id YOUR_PROCESS_ID
+IO_PROCESS_ID=YOUR_PROCESS_ID npm run analyze
 
 # Set custom minimum stake threshold
-npm start -- --min-stake 100000
+MIN_STAKE=100000 npm run analyze
 
 # Enable performance analysis (slower but more detailed)
-npm start -- --analyze-performance
+npm run analyze:performance
 ```
 
 ### API Rate Limits
@@ -184,6 +184,9 @@ Interactive visual report that includes:
 - `asn_concentration`: Many gateways in same autonomous system
 - `datacenter_hosting`: Hosted in data center (not residential)
 - `geographic_proximity`: Cluster gateways are geographically close
+- `same_pattern_same_network`: Same naming pattern in same network
+- `close_registration_times`: Registered within a week of each other
+- `similar_stakes`: Very similar stake amounts across cluster
 
 ## Architecture
 
@@ -207,14 +210,14 @@ src/
 # Install dependencies
 npm install
 
-# Run in development mode
-npm run dev
+# Run analyzer directly with tsx
+npm run analyze
 
 # Run linter
 npm run lint
 
-# Run tests (if available)
-npm test
+# Format code
+npm run format
 
 # Build for production
 npm run build
@@ -222,7 +225,7 @@ npm run build
 
 ## License
 
-[Add your license here]
+MIT License - See LICENSE file for details
 
 ## Contributing
 
