@@ -1,0 +1,48 @@
+{
+  "name": "ar-io-network-analyzer",
+  "version": "0.0.1",
+  "description": "Basic scripts to analyze AR.IO Network centralization patterns to identify potential same-actor gateways",
+  "type": "module",
+  "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vilenarios/ar-io-network-analyzer.git"
+  },
+  "homepage": "https://github.com/vilenarios/ar-io-network-analyzer#readme",
+  "bugs": {
+    "url": "https://github.com/vilenarios/ar-io-network-analyzer/issues"
+  },
+  "scripts": {
+    "analyze": "tsx src/index.ts",
+    "analyze:demo": "USE_DEMO_DATA=true tsx src/index.ts",
+    "analyze:performance": "ANALYZE_PERFORMANCE=true tsx src/index.ts",
+    "build": "tsc",
+    "clean": "rm -rf dist *.csv *.json",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "eslint src --ext .ts"
+  },
+  "keywords": [
+    "ar.io",
+    "arweave",
+    "gateway",
+    "analysis",
+    "centralization"
+  ],
+  "author": "Vilenarios",
+  "license": "MIT",
+  "dependencies": {
+    "@ar.io/sdk": "^3.9.1-alpha.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
