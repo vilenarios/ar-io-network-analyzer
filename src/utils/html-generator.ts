@@ -628,12 +628,12 @@ export function generateHTMLReport(
             ${summary.economicImpact ? `
             <div class="stat-card">
                 <h3>Epoch Rewards</h3>
-                <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()}</div>
-                <div class="subtitle">Total ARIO this epoch</div>
+                <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
+                <div class="subtitle">Total this epoch</div>
             </div>
             <div class="stat-card">
                 <h3>To Centralized Entities</h3>
-                <div class="value">${Math.round(summary.economicImpact.topCentralizedRewards / 1e6).toLocaleString()}</div>
+                <div class="value">${Math.round(summary.economicImpact.topCentralizedRewards / 1e6).toLocaleString()} $ARIO</div>
                 <div class="subtitle">${summary.economicImpact.topCentralizedPercentage.toFixed(1)}% of total</div>
             </div>
             ` : ''}
@@ -642,7 +642,7 @@ export function generateHTMLReport(
                 <h3>Unique TLDs</h3>
                 <div class="value">${(() => {
                     const tlds = new Set();
-                    ${JSON.stringify(csvData)}.forEach(gw => {
+                    csvData.forEach(gw => {
                         if (gw.baseDomain) {
                             const tld = gw.baseDomain.substring(gw.baseDomain.lastIndexOf('.'));
                             tlds.add(tld);
