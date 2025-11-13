@@ -429,56 +429,10 @@ export class GatewayCentralizationAnalyzer {
         });
       }
     });
-    
-    // IP range clusters (only if not already clustered)
-    const ipRangeGroups = this.groupBy(this.results, r => r.ipRange);
-    ipRangeGroups.forEach((gateways, range) => {
-      if (range === 'unknown') return;
-      
-      const unclustered = gateways.filter(gw => !gw.clusterId);
-      if (unclustered.length >= 3) {
-        const id = `ip-${clusterId++}`;
-        unclustered.forEach((gw, idx) => {
-          gw.clusterId = id;
-          gw.clusterSize = unclustered.length;
-          gw.clusterRole = idx === 0 ? 'primary' : 'secondary';
-          
-          if (!gw.suspicionNotes.includes('same_ip_range')) {
-            gw.suspicionNotes.push('same_ip_range');
-          }
-        });
-      }
-    });
-    
-    // Pattern-based clusters (for gateways with same pattern but different domains)
-    const patternGroups = this.groupBy(
-      this.results.filter(r => !r.clusterId && r.domainPattern !== 'unique'),
-      r => r.domainPattern
-    );
-    
-    patternGroups.forEach((gateways, _pattern) => {
-      // Group by IP /16 range for broader detection
-      const ipGroups = this.groupBy(gateways, gw => {
-        if (gw.ipAddress === 'resolution_failed') return 'unknown';
-        const parts = gw.ipAddress.split('.');
-        return `${parts[0]}.${parts[1]}.0.0/16`;
-      });
-      
-      ipGroups.forEach((ipGateways, ipPrefix) => {
-        if (ipPrefix !== 'unknown' && ipGateways.length >= 3) {
-          const id = `pattern-${clusterId++}`;
-          ipGateways.forEach((gw, idx) => {
-            gw.clusterId = id;
-            gw.clusterSize = ipGateways.length;
-            gw.clusterRole = idx === 0 ? 'primary' : 'secondary';
-            
-            if (!gw.suspicionNotes.includes('same_pattern_same_network')) {
-              gw.suspicionNotes.push('same_pattern_same_network');
-            }
-          });
-        }
-      });
-    });
+
+    // NOTE: Removed IP-only and pattern-only clustering to avoid false positives.
+    // Only domain + infrastructure clustering is used, as it's the definitive signal
+    // of one operator controlling multiple gateways on the same domain.
   }
   
   private calculateTemporalScores() {
