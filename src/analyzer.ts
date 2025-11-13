@@ -430,9 +430,36 @@ export class GatewayCentralizationAnalyzer {
       }
     });
 
-    // NOTE: Removed IP-only and pattern-only clustering to avoid false positives.
-    // Only domain + infrastructure clustering is used, as it's the definitive signal
-    // of one operator controlling multiple gateways on the same domain.
+    // Exact IP address clustering - multiple domains on same exact IP
+    // This is a strong signal (much stronger than /24 range) that one operator
+    // is running multiple gateways from the same server with different domain names
+    const exactIpGroups = this.groupBy(
+      this.results.filter(r => !r.clusterId && r.ipAddress !== 'resolution_failed'),
+      r => r.ipAddress
+    );
+
+    exactIpGroups.forEach((gateways, exactIp) => {
+      // Require 3+ gateways on exact same IP with different domains
+      if (gateways.length >= 3) {
+        // Check that they're actually different domains (not already caught by domain clustering)
+        const uniqueDomains = new Set(gateways.map(gw => gw.baseDomain));
+        if (uniqueDomains.size >= 2) {
+          const id = `ip-exact-${clusterId++}`;
+          gateways.forEach((gw, idx) => {
+            gw.clusterId = id;
+            gw.clusterSize = gateways.length;
+            gw.clusterRole = idx === 0 ? 'primary' : 'secondary';
+
+            if (!gw.suspicionNotes.includes('same_exact_ip')) {
+              gw.suspicionNotes.push('same_exact_ip');
+            }
+          });
+
+          console.log(`  Created exact IP cluster: ${gateways.length} gateways on ${exactIp}`);
+          console.log(`    Domains: ${Array.from(uniqueDomains).join(', ')}`);
+        }
+      }
+    });
   }
   
   private calculateTemporalScores() {
