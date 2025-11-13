@@ -639,6 +639,25 @@ export function generateHTMLReport(
             ` : ''}
             ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
             <div class="stat-card">
+                <h3>Unique TLDs</h3>
+                <div class="value">${(() => {
+                    const tlds = new Set();
+                    ${JSON.stringify(csvData)}.forEach(gw => {
+                        if (gw.baseDomain) {
+                            const tld = gw.baseDomain.substring(gw.baseDomain.lastIndexOf('.'));
+                            tlds.add(tld);
+                        }
+                    });
+                    return tlds.size;
+                })()}</div>
+                <div class="subtitle">ArNS resilience across TLDs</div>
+            </div>
+            <div class="stat-card">
+                <h3>Top Country</h3>
+                <div class="value">${summary.infrastructureImpact.countryDistribution[0]?.country || 'N/A'}</div>
+                <div class="subtitle">${summary.infrastructureImpact.countryDistribution[0]?.count || 0} gateways (${summary.infrastructureImpact.countryDistribution[0]?.percentage.toFixed(1) || '0'}%)</div>
+            </div>
+            <div class="stat-card">
                 <h3>Datacenter Hosted</h3>
                 <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
                 <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} of ${summary.totalGateways} gateways</div>
