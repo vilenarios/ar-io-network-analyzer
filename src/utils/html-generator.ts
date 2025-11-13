@@ -835,6 +835,11 @@ export function generateHTMLReport(
                     <div class="value">${summary.infrastructureImpact.uniqueIsps}</div>
                     <div class="subtitle">Service providers</div>
                 </div>
+                <div class="stat-card">
+                    <h3>Unique TLDs</h3>
+                    <div class="value" id="uniqueTldCount">-</div>
+                    <div class="subtitle">Domain diversity</div>
+                </div>
             </div>
 
             <!-- Charts Grid -->
@@ -849,6 +854,20 @@ export function generateHTMLReport(
                     <h2>Top 10 Hosting Providers</h2>
                     <div style="height: 300px;">
                         <canvas id="providersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Domain Diversity Section -->
+            <div style="margin-top: 30px;">
+                <h3 style="margin-bottom: 16px;">Domain Diversity (ArNS Resilience)</h3>
+                <div class="chart-card">
+                    <h2>Top-Level Domain Distribution</h2>
+                    <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 16px;">
+                        ArNS names resolve through all gateway domains. More TLDs = greater resilience against domain seizures.
+                    </p>
+                    <div style="height: 400px;">
+                        <canvas id="tldChart"></canvas>
                     </div>
                 </div>
             </div>
@@ -1257,7 +1276,7 @@ export function generateHTMLReport(
         });
 
         // Infrastructure charts
-        let hostingTypeChart, providersChart;
+        let hostingTypeChart, providersChart, tldChart;
         ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
         const infrastructureData = ${JSON.stringify(summary.infrastructureImpact)};
 
@@ -1320,6 +1339,81 @@ export function generateHTMLReport(
                 }
             });
         }
+
+        // TLD Distribution Chart
+        const tldCtx = document.getElementById('tldChart')?.getContext('2d');
+        if (tldCtx) {
+            // Calculate TLD distribution from gateway data
+            const gateways = ${JSON.stringify(csvData)};
+            const tldCounts = {};
+
+            gateways.forEach(g => {
+                if (g.baseDomain) {
+                    // Extract TLD from base domain (e.g., "vnar.xyz" -> ".xyz")
+                    const tld = g.baseDomain.substring(g.baseDomain.lastIndexOf('.'));
+                    tldCounts[tld] = (tldCounts[tld] || 0) + 1;
+                }
+            });
+
+            // Sort by count and get top TLDs
+            const sortedTlds = Object.entries(tldCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 15); // Top 15 TLDs
+
+            // Update unique TLD count
+            document.getElementById('uniqueTldCount').textContent = Object.keys(tldCounts).length;
+
+            // Generate colors for the chart
+            const colors = [
+                '#4F46E5', '#7C3AED', '#EC4899', '#EF4444', '#F59E0B',
+                '#10B981', '#14B8A6', '#06B6D4', '#3B82F6', '#6366F1',
+                '#8B5CF6', '#A855F7', '#D946EF', '#F43F5E', '#FB923C'
+            ];
+
+            tldChart = new Chart(tldCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: sortedTlds.map(([tld]) => tld),
+                    datasets: [{
+                        data: sortedTlds.map(([, count]) => count),
+                        backgroundColor: colors,
+                        borderWidth: 2,
+                        borderColor: '#FFFFFF'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                padding: 15,
+                                font: { size: 12 },
+                                generateLabels: function(chart) {
+                                    const data = chart.data;
+                                    return data.labels.map((label, i) => ({
+                                        text: \`\${label} (\${data.datasets[0].data[i]})\`,
+                                        fillStyle: data.datasets[0].backgroundColor[i],
+                                        hidden: false,
+                                        index: i
+                                    }));
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return \`\${context.label}: \${context.parsed} gateways (\${percentage}%)\`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
         ` : ''}
 
         function updateChartTheme() {
@@ -1372,6 +1466,12 @@ export function generateHTMLReport(
                     }
                 }
                 providersChart.update();
+            }
+
+            // Update TLD chart
+            if (tldChart && tldChart.options.plugins.legend) {
+                tldChart.options.plugins.legend.labels.color = textColor;
+                tldChart.update();
             }
         }
 
