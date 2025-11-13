@@ -367,17 +367,39 @@ export class GatewayCentralizationAnalyzer {
         const isps = new Set(gateways.map(gw => gw.isp).filter(Boolean));
         const countries = new Set(gateways.map(gw => gw.country).filter(Boolean));
 
-        // Calculate infrastructure sharing ratios
-        const ipRangeRatio = 1 - (ipRanges.size / gateways.length); // High = many share IPs
-        const ispCountryRatio = (isps.size === 1 && countries.size === 1) ? 0.9 :
-                                (isps.size <= 2 && countries.size === 1) ? 0.5 : 0;
+        // Calculate concentration on SINGLE most common IP range
+        const ipRangeCounts = new Map<string, number>();
+        gateways.forEach(gw => {
+          if (gw.ipRange !== 'unknown') {
+            ipRangeCounts.set(gw.ipRange, (ipRangeCounts.get(gw.ipRange) || 0) + 1);
+          }
+        });
+        const maxIpRangeCount = Math.max(0, ...Array.from(ipRangeCounts.values()));
+        const ipRangeConcentration = maxIpRangeCount / gateways.length;
 
-        // Only cluster if significant infrastructure sharing
-        // Either: >50% share IP ranges, OR same ISP+country
-        const isInfrastructureClustered = ipRangeRatio > 0.5 || ispCountryRatio > 0.5;
+        // Check if majority on same ISP+country combination
+        const ispCountryCombos = new Map<string, number>();
+        gateways.forEach(gw => {
+          if (gw.isp && gw.country) {
+            const key = `${gw.isp}|${gw.country}`;
+            ispCountryCombos.set(key, (ispCountryCombos.get(key) || 0) + 1);
+          }
+        });
+        const maxIspCountryCount = Math.max(0, ...Array.from(ispCountryCombos.values()));
+        const ispCountryConcentration = maxIspCountryCount / gateways.length;
+
+        // Stricter clustering criteria:
+        // 1. 80%+ on the SAME single /24 IP range (clear centralization), OR
+        // 2. 70%+ same ISP+country AND 50%+ IP concentration (probable centralization)
+        const isInfrastructureClustered =
+          ipRangeConcentration >= 0.8 ||
+          (ispCountryConcentration >= 0.7 && ipRangeConcentration >= 0.5);
 
         if (!isInfrastructureClustered) {
-          console.log(`  Skipping clustering for ${domain} (${gateways.length} gateways) - diverse infrastructure (${ipRanges.size} IP ranges, ${isps.size} ISPs, ${countries.size} countries)`);
+          console.log(`  Skipping clustering for ${domain} (${gateways.length} gateways) - diverse infrastructure`);
+          console.log(`    IP range concentration: ${(ipRangeConcentration * 100).toFixed(1)}% (max ${maxIpRangeCount} on single range)`);
+          console.log(`    ISP+Country concentration: ${(ispCountryConcentration * 100).toFixed(1)}%`);
+          console.log(`    Unique: ${ipRanges.size} IP ranges, ${isps.size} ISPs, ${countries.size} countries`);
           // Still set domainGroupSize for analysis, but don't create cluster
           gateways.forEach(gw => {
             gw.domainGroupSize = gateways.length;
