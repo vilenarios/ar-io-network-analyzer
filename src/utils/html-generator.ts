@@ -1235,12 +1235,15 @@ export function generateHTMLReport(
             }
         });
 
-        // Top domains chart
+        // Top centralized domains chart - only domains with domain-based clusters
         const topDomains = {};
         ${JSON.stringify(csvData)}.forEach(gw => {
-            topDomains[gw.baseDomain] = (topDomains[gw.baseDomain] || 0) + 1;
+            // Only count gateways that are in domain-based clusters (not ip- or pattern- clusters)
+            if (gw.clusterId && gw.clusterId.startsWith('domain-')) {
+                topDomains[gw.baseDomain] = (topDomains[gw.baseDomain] || 0) + 1;
+            }
         });
-        
+
         const sortedDomains = Object.entries(topDomains)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 10);
