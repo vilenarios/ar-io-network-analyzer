@@ -220,10 +220,10 @@ export class GatewayCentralizationAnalyzer {
     const parts = fqdn.split('.');
     let baseDomain: string;
     
-    // Handle multi-level TLDs
-    const multiLevelTLDs = ['co.uk', 'co.jp', 'co.nz', 'com.au', 'com.br', 'net.au', 'org.uk'];
+    // Handle multi-level TLDs and pseudo-TLDs
+    const multiLevelTLDs = ['co.uk', 'co.jp', 'co.nz', 'com.au', 'com.br', 'net.au', 'org.uk', 'io.vn'];
     const lastTwo = parts.slice(-2).join('.');
-    
+
     if (multiLevelTLDs.includes(lastTwo) && parts.length > 2) {
       baseDomain = parts.slice(-3).join('.');
     } else {
