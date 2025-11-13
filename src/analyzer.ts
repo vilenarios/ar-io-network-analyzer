@@ -357,24 +357,48 @@ export class GatewayCentralizationAnalyzer {
   private detectClusters() {
     const domainGroups = this.groupBy(this.results, r => r.baseDomain);
     let clusterId = 1;
-    
-    // Domain-based clusters
-    domainGroups.forEach((gateways, _domain) => {
+
+    // Domain-based clusters - but only if they share infrastructure too
+    domainGroups.forEach((gateways, domain) => {
       if (gateways.length >= 2) {
+        // Check if gateways on this domain also share infrastructure
+        // (IP ranges or ISP+Country) indicating centralized control
+        const ipRanges = new Set(gateways.map(gw => gw.ipRange).filter(r => r !== 'unknown'));
+        const isps = new Set(gateways.map(gw => gw.isp).filter(Boolean));
+        const countries = new Set(gateways.map(gw => gw.country).filter(Boolean));
+
+        // Calculate infrastructure sharing ratios
+        const ipRangeRatio = 1 - (ipRanges.size / gateways.length); // High = many share IPs
+        const ispCountryRatio = (isps.size === 1 && countries.size === 1) ? 0.9 :
+                                (isps.size <= 2 && countries.size === 1) ? 0.5 : 0;
+
+        // Only cluster if significant infrastructure sharing
+        // Either: >50% share IP ranges, OR same ISP+country
+        const isInfrastructureClustered = ipRangeRatio > 0.5 || ispCountryRatio > 0.5;
+
+        if (!isInfrastructureClustered) {
+          console.log(`  Skipping clustering for ${domain} (${gateways.length} gateways) - diverse infrastructure (${ipRanges.size} IP ranges, ${isps.size} ISPs, ${countries.size} countries)`);
+          // Still set domainGroupSize for analysis, but don't create cluster
+          gateways.forEach(gw => {
+            gw.domainGroupSize = gateways.length;
+          });
+          return; // Skip clustering this domain
+        }
+
         const id = `domain-${clusterId++}`;
-        
+
         gateways.sort((a, b) => b.stake - a.stake);
-        
+
         gateways.forEach((gw, idx) => {
           gw.clusterId = id;
           gw.clusterSize = gateways.length;
           gw.clusterRole = idx === 0 ? 'primary' : 'secondary';
           gw.domainGroupSize = gateways.length;
-          
+
           if (!gw.suspicionNotes.includes('multiple_per_domain')) {
             gw.suspicionNotes.push('multiple_per_domain');
           }
-          
+
           if (gw.domainPattern !== 'unique' && gateways.length >= 3) {
             if (!gw.suspicionNotes.includes('sequential_pattern')) {
               gw.suspicionNotes.push('sequential_pattern');
