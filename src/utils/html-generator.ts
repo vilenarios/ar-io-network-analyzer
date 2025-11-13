@@ -93,42 +93,70 @@ export function generateHTMLReport(
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
             margin-bottom: 30px;
         }
 
         .stat-card {
             background: var(--card-bg);
-            padding: 24px;
+            padding: 16px;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
             transition: all 0.3s ease;
         }
 
         .stat-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
         }
 
         .stat-card h3 {
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
 
         .stat-card .value {
-            font-size: 2rem;
+            font-size: 1.5rem;
             font-weight: 700;
             color: var(--text-color);
         }
 
         .stat-card .subtitle {
-            font-size: 0.875rem;
+            font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 4px;
+        }
+
+        .status-breakdown {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 0.75rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-badge.joined {
+            background-color: #10B981;
+        }
+
+        .status-badge.leaving {
+            background-color: #F59E0B;
         }
 
         .charts-grid {
@@ -608,7 +636,25 @@ export function generateHTMLReport(
             <div class="stat-card">
                 <h3>Total Gateways</h3>
                 <div class="value">${summary.totalGateways}</div>
-                <div class="subtitle">Active in network</div>
+                <div class="status-breakdown">
+                    <div class="status-item">
+                        <span class="status-badge joined"></span>
+                        <span>${(() => {
+                            const joined = csvData.filter(gw => gw.status === 'joined').length;
+                            return joined;
+                        })()} joined</span>
+                    </div>
+                    ${(() => {
+                        const leaving = csvData.filter(gw => gw.status === 'leaving').length;
+                        if (leaving > 0) {
+                            return `<div class="status-item">
+                                <span class="status-badge leaving"></span>
+                                <span>${leaving} leaving</span>
+                            </div>`;
+                        }
+                        return '';
+                    })()}
+                </div>
             </div>
             <div class="stat-card">
                 <h3>Clustered Gateways</h3>
