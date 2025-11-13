@@ -108,6 +108,25 @@ export interface TechnicalFingerprint {
   };
 }
 
+export interface InfrastructureImpact {
+  totalDatacenterHosted: number;
+  datacenterPercentage: number;
+  topProviders: Array<{
+    name: string;
+    count: number;
+    percentage: number;
+    gateways: string[];
+  }>;
+  countryDistribution: Array<{
+    country: string;
+    countryCode: string;
+    count: number;
+    percentage: number;
+  }>;
+  uniqueIsps: number;
+  uniqueCountries: number;
+}
+
 export interface CentralizationReport {
   timestamp: string;
   totalGateways: number;
@@ -127,6 +146,7 @@ export interface CentralizationReport {
     topCentralizedRewards: number;
     topCentralizedPercentage: number;
   };
+  infrastructureImpact?: InfrastructureImpact;
 }
 
 export interface ClusterSummary {

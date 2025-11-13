@@ -18,6 +18,7 @@ export function generateHTMLReport(
     <title>AR.IO Gateway Centralization Analysis Report</title>
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/globe.gl"></script>
     <style>
         :root {
             --primary-color: #4F46E5;
@@ -426,6 +427,133 @@ export function generateHTMLReport(
             text-align: center;
         }
 
+        /* Globe visualization styles */
+        .globe-container {
+            position: relative;
+            width: 100%;
+            height: 700px;
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        #globeViz {
+            width: 100%;
+            height: 100%;
+        }
+
+        .globe-controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            min-width: 200px;
+        }
+
+        .globe-controls h3 {
+            font-size: 1rem;
+            margin-bottom: 12px;
+            color: var(--text-color);
+        }
+
+        .globe-control-item {
+            margin-bottom: 12px;
+        }
+
+        .globe-control-item label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.875rem;
+            color: var(--text-color);
+            cursor: pointer;
+        }
+
+        .globe-control-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        .globe-legend {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            z-index: 100;
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .globe-legend h4 {
+            font-size: 0.875rem;
+            margin-bottom: 8px;
+            color: var(--text-color);
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
+
+        .globe-info {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            max-width: 300px;
+            display: none;
+        }
+
+        .globe-info.visible {
+            display: block;
+        }
+
+        .globe-info h3 {
+            font-size: 1rem;
+            margin-bottom: 8px;
+            color: var(--text-color);
+            word-break: break-all;
+        }
+
+        .globe-info p {
+            font-size: 0.875rem;
+            margin: 4px 0;
+            color: var(--text-muted);
+        }
+
+        .globe-info .close-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: none;
+            border: none;
+            font-size: 1.25rem;
+            cursor: pointer;
+            color: var(--text-muted);
+        }
+
         @media (max-width: 768px) {
             .header {
                 flex-direction: column;
@@ -442,6 +570,29 @@ export function generateHTMLReport(
 
             .filters {
                 flex-direction: column;
+            }
+
+            .globe-container {
+                height: 500px;
+            }
+
+            .globe-controls {
+                left: 10px;
+                top: 10px;
+                padding: 12px;
+                min-width: 150px;
+            }
+
+            .globe-legend {
+                bottom: 10px;
+                right: 10px;
+                padding: 12px;
+            }
+
+            .globe-info {
+                top: 10px;
+                right: 10px;
+                max-width: 200px;
             }
         }
     </style>
@@ -486,6 +637,18 @@ export function generateHTMLReport(
                 <div class="subtitle">${summary.economicImpact.topCentralizedPercentage.toFixed(1)}% of total</div>
             </div>
             ` : ''}
+            ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+            <div class="stat-card">
+                <h3>Datacenter Hosted</h3>
+                <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
+                <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} of ${summary.totalGateways} gateways</div>
+            </div>
+            <div class="stat-card">
+                <h3>Top Hosting Provider</h3>
+                <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
+                <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways (${summary.infrastructureImpact.topProviders[0]?.percentage.toFixed(1) || '0'}%)</div>
+            </div>
+            ` : ''}
         </div>
 
         <div class="charts-grid">
@@ -505,6 +668,8 @@ export function generateHTMLReport(
 
         <div class="tabs">
             <button class="tab active" onclick="switchTab('summary')">Summary Report</button>
+            <button class="tab" onclick="switchTab('globe')">🌍 Globe View</button>
+            ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">🏢 Infrastructure</button>' : ''}
             <button class="tab" onclick="switchTab('detailed')">Detailed Analysis</button>
             <button class="tab" onclick="switchTab('clusters')">Cluster Analysis</button>
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
@@ -556,6 +721,213 @@ export function generateHTMLReport(
                 </tbody>
             </table>
         </div>
+
+        <div id="globe-content" class="tab-content">
+            <h2>Global Gateway Distribution</h2>
+            <div class="globe-container">
+                <div id="globeViz"></div>
+
+                <div class="globe-controls">
+                    <h3>Controls</h3>
+                    <div class="globe-control-item">
+                        <label>
+                            <input type="checkbox" id="autoRotate" checked onchange="toggleAutoRotate()">
+                            Auto-rotate
+                        </label>
+                    </div>
+                    <div class="globe-control-item">
+                        <label>
+                            <input type="checkbox" id="showArcs" checked onchange="toggleArcs()">
+                            Show cluster arcs
+                        </label>
+                    </div>
+                    <div class="globe-control-item" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                        <strong style="font-size: 0.875rem; margin-bottom: 8px; display: block;">Color By:</strong>
+                        <label style="margin-left: 8px;">
+                            <input type="radio" name="colorMode" value="risk" checked onchange="updateGlobeColorMode()">
+                            Risk Level
+                        </label>
+                    </div>
+                    <div class="globe-control-item">
+                        <label style="margin-left: 8px;">
+                            <input type="radio" name="colorMode" value="provider" onchange="updateGlobeColorMode()">
+                            Hosting Provider
+                        </label>
+                    </div>
+                    <div class="globe-control-item" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
+                        <label>
+                            <input type="checkbox" id="showLowRisk" checked onchange="updateGlobeFilters()">
+                            Show low risk
+                        </label>
+                    </div>
+                    <div class="globe-control-item">
+                        <label>
+                            <input type="checkbox" id="showMediumRisk" checked onchange="updateGlobeFilters()">
+                            Show medium risk
+                        </label>
+                    </div>
+                    <div class="globe-control-item">
+                        <label>
+                            <input type="checkbox" id="showHighRisk" checked onchange="updateGlobeFilters()">
+                            Show high risk
+                        </label>
+                    </div>
+                </div>
+
+                <div class="globe-legend">
+                    <h4 id="globeLegendTitle">Risk Levels</h4>
+                    <div id="globeLegendContent">
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #10B981;"></div>
+                            <span>Low (0.0-0.4)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #F59E0B;"></div>
+                            <span>Medium (0.4-0.7)</span>
+                        </div>
+                        <div class="legend-item">
+                            <div class="legend-color" style="background: #EF4444;"></div>
+                            <span>High (0.7-1.0)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="globeInfo" class="globe-info">
+                    <button class="close-btn" onclick="closeGlobeInfo()">×</button>
+                    <h3 id="globeInfoTitle"></h3>
+                    <p><strong>Score:</strong> <span id="globeInfoScore"></span></p>
+                    <p><strong>Location:</strong> <span id="globeInfoLocation"></span></p>
+                    <p><strong>ISP:</strong> <span id="globeInfoIsp"></span></p>
+                    <p><strong>Datacenter:</strong> <span id="globeInfoDatacenter"></span></p>
+                    <p><strong>Stake:</strong> <span id="globeInfoStake"></span></p>
+                    <p><strong>Cluster:</strong> <span id="globeInfoCluster"></span></p>
+                </div>
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 12px;">
+                Showing ${csvData.filter(g => g.latitude && g.longitude).length} gateways with geographic data.
+                Point size represents stake amount. Click any point for details.
+            </p>
+        </div>
+
+        ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+        <div id="infrastructure-content" class="tab-content">
+            <h2>Infrastructure Analysis</h2>
+
+            <!-- Quick Stats -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 30px;">
+                <div class="stat-card">
+                    <h3>Datacenter Hosted</h3>
+                    <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
+                    <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} gateways</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Top Provider</h3>
+                    <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
+                    <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Countries</h3>
+                    <div class="value">${summary.infrastructureImpact.uniqueCountries}</div>
+                    <div class="subtitle">Geographic distribution</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Unique ISPs</h3>
+                    <div class="value">${summary.infrastructureImpact.uniqueIsps}</div>
+                    <div class="subtitle">Service providers</div>
+                </div>
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h2>Hosting Type Distribution</h2>
+                    <div style="height: 300px;">
+                        <canvas id="hostingTypeChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h2>Top 10 Hosting Providers</h2>
+                    <div style="height: 300px;">
+                        <canvas id="providersChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ISP Distribution Table -->
+            <div style="margin-top: 30px;">
+                <h3 style="margin-bottom: 16px;">ISP/Hosting Provider Distribution</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Provider</th>
+                            <th>Gateway Count</th>
+                            <th>Percentage</th>
+                            <th>Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${summary.infrastructureImpact.topProviders.slice(0, 20).map((provider, index) => {
+                            // Determine if it's a datacenter (check first gateway from this provider)
+                            const sampleGateway = csvData.find(g => g.isp === provider.name);
+                            const isDatacenter = sampleGateway?.hosting === true;
+                            return `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${provider.name}</td>
+                                <td>${provider.count}</td>
+                                <td>
+                                    <span class="score-badge ${
+                                        provider.percentage > 10 ? 'score-high' :
+                                        provider.percentage > 5 ? 'score-medium' :
+                                        'score-low'
+                                    }">
+                                        ${provider.percentage.toFixed(2)}%
+                                    </span>
+                                </td>
+                                <td>${isDatacenter ? '🏢 Datacenter' : '🏠 Other'}</td>
+                            </tr>
+                        `}).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Country Distribution Table -->
+            <div style="margin-top: 30px;">
+                <h3 style="margin-bottom: 16px;">Geographic Distribution by Country</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Country</th>
+                            <th>Code</th>
+                            <th>Gateway Count</th>
+                            <th>Percentage</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${summary.infrastructureImpact.countryDistribution.slice(0, 20).map((country, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${country.country}</td>
+                                <td>${country.countryCode}</td>
+                                <td>${country.count}</td>
+                                <td>
+                                    <span class="score-badge ${
+                                        country.percentage > 20 ? 'score-high' :
+                                        country.percentage > 10 ? 'score-medium' :
+                                        'score-low'
+                                    }">
+                                        ${country.percentage.toFixed(2)}%
+                                    </span>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        ` : ''}
 
         <div id="detailed-content" class="tab-content">
             <h2>All Gateway Analysis</h2>
@@ -884,6 +1256,72 @@ export function generateHTMLReport(
             }
         });
 
+        // Infrastructure charts
+        let hostingTypeChart, providersChart;
+        ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+        const infrastructureData = ${JSON.stringify(summary.infrastructureImpact)};
+
+        // Hosting Type Pie Chart
+        const hostingTypeCtx = document.getElementById('hostingTypeChart')?.getContext('2d');
+        if (hostingTypeCtx) {
+            const nonDatacenter = ${summary.totalGateways} - infrastructureData.totalDatacenterHosted;
+            hostingTypeChart = new Chart(hostingTypeCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Datacenter', 'Non-Datacenter'],
+                    datasets: [{
+                        data: [infrastructureData.totalDatacenterHosted, nonDatacenter],
+                        backgroundColor: ['#F59E0B', '#10B981'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                padding: 20,
+                                font: { size: 14 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Top Providers Bar Chart
+        const providersCtx = document.getElementById('providersChart')?.getContext('2d');
+        if (providersCtx) {
+            const top10Providers = infrastructureData.topProviders.slice(0, 10);
+            providersChart = new Chart(providersCtx, {
+                type: 'bar',
+                data: {
+                    labels: top10Providers.map(p => p.name),
+                    datasets: [{
+                        label: 'Gateway Count',
+                        data: top10Providers.map(p => p.count),
+                        backgroundColor: '#4F46E5',
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { beginAtZero: true }
+                    }
+                }
+            });
+        }
+        ` : ''}
+
         function updateChartTheme() {
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const textColor = isDark ? '#F9FAFB' : '#1F2937';
@@ -912,6 +1350,29 @@ export function generateHTMLReport(
                 }
                 domainsChart.update();
             }
+
+            // Update infrastructure charts
+            if (hostingTypeChart && hostingTypeChart.options.plugins.legend) {
+                hostingTypeChart.options.plugins.legend.labels.color = textColor;
+                hostingTypeChart.update();
+            }
+
+            if (providersChart) {
+                if (providersChart.options.plugins.legend) {
+                    providersChart.options.plugins.legend.labels.color = textColor;
+                }
+                if (providersChart.options.scales) {
+                    if (providersChart.options.scales.x) {
+                        providersChart.options.scales.x.ticks = { ...providersChart.options.scales.x.ticks, color: textColor };
+                        providersChart.options.scales.x.grid = { ...providersChart.options.scales.x.grid, color: gridColor };
+                    }
+                    if (providersChart.options.scales.y) {
+                        providersChart.options.scales.y.ticks = { ...providersChart.options.scales.y.ticks, color: textColor };
+                        providersChart.options.scales.y.grid = { ...providersChart.options.scales.y.grid, color: gridColor };
+                    }
+                }
+                providersChart.update();
+            }
         }
 
         function downloadFile(filename) {
@@ -920,6 +1381,316 @@ export function generateHTMLReport(
             link.href = filename;
             link.download = filename;
             link.click();
+        }
+
+        // Globe visualization
+        let myGlobe;
+        let globeData = [];
+        let globeArcs = [];
+        let currentFilters = { low: true, medium: true, high: true };
+        let colorMode = 'risk'; // 'risk' or 'provider'
+
+        // Provider color mapping
+        const providerColors = {
+            'Hetzner': '#FF6B6B',
+            'Amazon': '#FF9F40',
+            'DigitalOcean': '#4ECDC4',
+            'OVH': '#A29BFE',
+            'Vultr': '#74B9FF',
+            'Google': '#FD79A8',
+            'Microsoft': '#A8E6CF',
+            'Linode': '#FFD93D',
+            'Contabo': '#95E1D3',
+            'Datacenter': '#95A5A6',
+            'Non-Datacenter': '#2ECC71',
+            'Unknown': '#BDC3C7'
+        };
+
+        function getProviderColor(isp, hosting) {
+            if (!isp || isp === 'N/A') return providerColors['Unknown'];
+
+            // Check for known providers
+            const ispLower = isp.toLowerCase();
+            if (ispLower.includes('hetzner')) return providerColors['Hetzner'];
+            if (ispLower.includes('amazon') || ispLower.includes('aws')) return providerColors['Amazon'];
+            if (ispLower.includes('digitalocean')) return providerColors['DigitalOcean'];
+            if (ispLower.includes('ovh')) return providerColors['OVH'];
+            if (ispLower.includes('vultr')) return providerColors['Vultr'];
+            if (ispLower.includes('google')) return providerColors['Google'];
+            if (ispLower.includes('microsoft') || ispLower.includes('azure')) return providerColors['Microsoft'];
+            if (ispLower.includes('linode')) return providerColors['Linode'];
+            if (ispLower.includes('contabo')) return providerColors['Contabo'];
+
+            // Fallback based on hosting flag
+            return hosting ? providerColors['Datacenter'] : providerColors['Non-Datacenter'];
+        }
+
+        function initGlobe() {
+            if (myGlobe) return; // Already initialized
+
+            // Prepare gateway data for globe
+            const gateways = ${JSON.stringify(csvData)};
+            globeData = gateways
+                .filter(g => g.latitude && g.longitude)
+                .map(g => ({
+                    lat: g.latitude,
+                    lng: g.longitude,
+                    fqdn: g.fqdn,
+                    score: g.overallCentralization,
+                    stake: g.stake,
+                    city: g.city || 'Unknown',
+                    country: g.country || 'Unknown',
+                    isp: g.isp || 'Unknown',
+                    hosting: g.hosting || false,
+                    clusterId: g.clusterId,
+                    riskLevel: g.overallCentralization > 0.7 ? 'high' :
+                               g.overallCentralization > 0.4 ? 'medium' : 'low'
+                }));
+
+            // Generate arcs between gateways in the same cluster
+            const clusters = {};
+            globeData.forEach(g => {
+                if (g.clusterId) {
+                    if (!clusters[g.clusterId]) clusters[g.clusterId] = [];
+                    clusters[g.clusterId].push(g);
+                }
+            });
+
+            globeArcs = [];
+            Object.values(clusters).forEach(clusterGateways => {
+                if (clusterGateways.length > 1) {
+                    // Connect first gateway to all others in cluster
+                    const primary = clusterGateways[0];
+                    for (let i = 1; i < clusterGateways.length; i++) {
+                        const secondary = clusterGateways[i];
+                        globeArcs.push({
+                            startLat: primary.lat,
+                            startLng: primary.lng,
+                            endLat: secondary.lat,
+                            endLng: secondary.lng,
+                            clusterId: primary.clusterId,
+                            score: Math.max(primary.score, secondary.score)
+                        });
+                    }
+                }
+            });
+
+            // Initialize globe
+            myGlobe = Globe()
+                .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
+                .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
+                .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
+                .pointsData(globeData)
+                .pointLat('lat')
+                .pointLng('lng')
+                .pointColor(d => {
+                    if (colorMode === 'provider') {
+                        return getProviderColor(d.isp, d.hosting);
+                    } else {
+                        // Risk level colors
+                        if (d.score > 0.7) return '#EF4444';
+                        if (d.score > 0.4) return '#F59E0B';
+                        return '#10B981';
+                    }
+                })
+                .pointAltitude(d => {
+                    // Higher altitude for higher stakes (normalized)
+                    const maxStake = Math.max(...globeData.map(g => g.stake));
+                    return 0.01 + (d.stake / maxStake) * 0.05;
+                })
+                .pointRadius(d => {
+                    // Size based on stake
+                    const maxStake = Math.max(...globeData.map(g => g.stake));
+                    return 0.15 + (d.stake / maxStake) * 0.4;
+                })
+                .pointLabel(d => \`
+                    <div style="background: rgba(0,0,0,0.8); padding: 8px; border-radius: 4px; color: white;">
+                        <strong>\${d.fqdn}</strong><br/>
+                        Score: \${d.score.toFixed(3)}<br/>
+                        Location: \${d.city}, \${d.country}<br/>
+                        ISP: \${d.isp}<br/>
+                        Datacenter: \${d.hosting ? 'Yes' : 'No'}<br/>
+                        Stake: \${d.stake.toLocaleString()}
+                    </div>
+                \`)
+                .onPointClick(point => {
+                    document.getElementById('globeInfoTitle').textContent = point.fqdn;
+                    document.getElementById('globeInfoScore').innerHTML = \`
+                        <span class="score-badge \${
+                            point.score > 0.7 ? 'score-high' :
+                            point.score > 0.4 ? 'score-medium' :
+                            'score-low'
+                        }">
+                            \${point.score.toFixed(3)}
+                        </span>
+                    \`;
+                    document.getElementById('globeInfoLocation').textContent = \`\${point.city}, \${point.country}\`;
+                    document.getElementById('globeInfoIsp').textContent = point.isp || 'Unknown';
+                    document.getElementById('globeInfoDatacenter').textContent = point.hosting ? 'Yes' : 'No';
+                    document.getElementById('globeInfoStake').textContent = point.stake.toLocaleString();
+                    document.getElementById('globeInfoCluster').textContent = point.clusterId || 'None';
+                    document.getElementById('globeInfo').classList.add('visible');
+                })
+                .arcsData(globeArcs)
+                .arcStartLat('startLat')
+                .arcStartLng('startLng')
+                .arcEndLat('endLat')
+                .arcEndLng('endLng')
+                .arcColor(d => {
+                    if (d.score > 0.7) return 'rgba(239, 68, 68, 0.4)';
+                    if (d.score > 0.4) return 'rgba(245, 158, 11, 0.4)';
+                    return 'rgba(16, 185, 129, 0.4)';
+                })
+                .arcDashLength(0.4)
+                .arcDashGap(0.2)
+                .arcDashAnimateTime(2000)
+                .arcStroke(0.5)
+                (document.getElementById('globeViz'));
+
+            // Set initial view
+            myGlobe.pointOfView({ altitude: 2.5 });
+
+            // Enable controls
+            const controls = myGlobe.controls();
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.5;
+
+            // Handle theme changes
+            setTimeout(() => {
+                if (document.documentElement.getAttribute('data-theme') === 'dark') {
+                    myGlobe.globeImageUrl('https://unpkg.com/three-globe/example/img/earth-dark.jpg');
+                }
+            }, 100);
+        }
+
+        function toggleAutoRotate() {
+            if (!myGlobe) return;
+            const controls = myGlobe.controls();
+            controls.autoRotate = document.getElementById('autoRotate').checked;
+        }
+
+        function toggleArcs() {
+            if (!myGlobe) return;
+            const showArcs = document.getElementById('showArcs').checked;
+            myGlobe.arcsData(showArcs ? globeArcs : []);
+        }
+
+        function updateGlobeFilters() {
+            if (!myGlobe) return;
+
+            currentFilters.low = document.getElementById('showLowRisk').checked;
+            currentFilters.medium = document.getElementById('showMediumRisk').checked;
+            currentFilters.high = document.getElementById('showHighRisk').checked;
+
+            const filteredData = globeData.filter(g => {
+                if (g.riskLevel === 'low' && currentFilters.low) return true;
+                if (g.riskLevel === 'medium' && currentFilters.medium) return true;
+                if (g.riskLevel === 'high' && currentFilters.high) return true;
+                return false;
+            });
+
+            myGlobe.pointsData(filteredData);
+        }
+
+        function updateGlobeColorMode() {
+            if (!myGlobe) return;
+
+            // Get selected color mode
+            const selectedMode = document.querySelector('input[name="colorMode"]:checked').value;
+            colorMode = selectedMode;
+
+            // Update point colors
+            myGlobe.pointColor(d => {
+                if (colorMode === 'provider') {
+                    return getProviderColor(d.isp, d.hosting);
+                } else {
+                    if (d.score > 0.7) return '#EF4444';
+                    if (d.score > 0.4) return '#F59E0B';
+                    return '#10B981';
+                }
+            });
+
+            // Update legend
+            updateGlobeLegend();
+        }
+
+        function updateGlobeLegend() {
+            const title = document.getElementById('globeLegendTitle');
+            const content = document.getElementById('globeLegendContent');
+
+            if (colorMode === 'provider') {
+                title.textContent = 'Hosting Providers';
+
+                // Get unique providers from data
+                const providerCounts = {};
+                globeData.forEach(g => {
+                    const color = getProviderColor(g.isp, g.hosting);
+                    let providerName;
+                    const ispLower = (g.isp || '').toLowerCase();
+
+                    if (ispLower.includes('hetzner')) providerName = 'Hetzner';
+                    else if (ispLower.includes('amazon') || ispLower.includes('aws')) providerName = 'Amazon';
+                    else if (ispLower.includes('digitalocean')) providerName = 'DigitalOcean';
+                    else if (ispLower.includes('ovh')) providerName = 'OVH';
+                    else if (ispLower.includes('vultr')) providerName = 'Vultr';
+                    else if (ispLower.includes('google')) providerName = 'Google';
+                    else if (ispLower.includes('microsoft') || ispLower.includes('azure')) providerName = 'Microsoft';
+                    else if (g.hosting) providerName = 'Other Datacenter';
+                    else providerName = 'Non-Datacenter';
+
+                    if (!providerCounts[providerName]) {
+                        providerCounts[providerName] = { count: 0, color };
+                    }
+                    providerCounts[providerName].count++;
+                });
+
+                // Sort by count and take top 8
+                const sortedProviders = Object.entries(providerCounts)
+                    .sort((a, b) => b[1].count - a[1].count)
+                    .slice(0, 8);
+
+                content.innerHTML = sortedProviders.map(([name, data]) => \`
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: \${data.color};"></div>
+                        <span>\${name} (\${data.count})</span>
+                    </div>
+                \`).join('');
+            } else {
+                title.textContent = 'Risk Levels';
+                content.innerHTML = \`
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #10B981;"></div>
+                        <span>Low (0.0-0.4)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #F59E0B;"></div>
+                        <span>Medium (0.4-0.7)</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: #EF4444;"></div>
+                        <span>High (0.7-1.0)</span>
+                    </div>
+                \`;
+            }
+        }
+
+        function closeGlobeInfo() {
+            document.getElementById('globeInfo').classList.remove('visible');
+        }
+
+        // Original switchTab function - update to initialize globe when switching to it
+        const originalSwitchTab = switchTab;
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(tabName + '-content').classList.add('active');
+
+            // Initialize globe when switching to globe tab
+            if (tabName === 'globe') {
+                setTimeout(() => initGlobe(), 100);
+            }
         }
     </script>
 </body>

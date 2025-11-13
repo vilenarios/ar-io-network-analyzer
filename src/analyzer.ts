@@ -5,13 +5,14 @@
 import { resolve4 } from 'dns/promises';
 import * as https from 'https';
 import * as tls from 'tls';
-import type { 
-  Gateway, 
-  GatewayAnalysis, 
+import type {
+  Gateway,
+  GatewayAnalysis,
   TechnicalFingerprint,
   AnalyzerConfig,
   CentralizationReport,
-  ClusterSummary
+  ClusterSummary,
+  InfrastructureImpact
 } from './types.js';
 import { fetchGatewaysFromNetwork, getDemoGateways, fetchDistributions } from './data/gateway-fetcher.js';
 import { generateCSV, generateJSON } from './utils/report-generator.js';
@@ -765,7 +766,10 @@ export class GatewayCentralizationAnalyzer {
     if (this.distributionData && this.distributionData.rewards) {
       economicImpact = this.calculateEconomicImpact(clusterSummaries);
     }
-    
+
+    // Calculate infrastructure impact
+    const infrastructureImpact = this.calculateInfrastructureImpact();
+
     return {
       timestamp: new Date().toISOString(),
       totalGateways: this.results.length,
@@ -777,7 +781,8 @@ export class GatewayCentralizationAnalyzer {
         score: g.overallCentralization,
         reasons: g.suspicionNotes
       })),
-      economicImpact
+      economicImpact,
+      infrastructureImpact
     };
   }
   
@@ -834,7 +839,62 @@ export class GatewayCentralizationAnalyzer {
       topCentralizedPercentage
     };
   }
-  
+
+  private calculateInfrastructureImpact(): InfrastructureImpact {
+    // Count datacenter-hosted gateways
+    const datacenterGateways = this.results.filter(g => g.hosting === true);
+    const totalDatacenterHosted = datacenterGateways.length;
+    const datacenterPercentage = (totalDatacenterHosted / this.results.length) * 100;
+
+    // Group by ISP/hosting provider
+    const ispGroups = this.groupBy(
+      this.results.filter(g => g.isp),
+      g => g.isp!
+    );
+
+    // Calculate top providers
+    const topProviders = Array.from(ispGroups.entries())
+      .map(([name, gateways]) => ({
+        name,
+        count: gateways.length,
+        percentage: (gateways.length / this.results.length) * 100,
+        gateways: gateways.map(g => g.fqdn)
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10); // Top 10 providers
+
+    // Group by country
+    const countryGroups = this.groupBy(
+      this.results.filter(g => g.country),
+      g => g.country!
+    );
+
+    // Calculate country distribution
+    const countryDistribution = Array.from(countryGroups.entries())
+      .map(([country, gateways]) => {
+        const countryCode = gateways[0].countryCode || '';
+        return {
+          country,
+          countryCode,
+          count: gateways.length,
+          percentage: (gateways.length / this.results.length) * 100
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    const uniqueIsps = ispGroups.size;
+    const uniqueCountries = countryGroups.size;
+
+    return {
+      totalDatacenterHosted,
+      datacenterPercentage,
+      topProviders,
+      countryDistribution,
+      uniqueIsps,
+      uniqueCountries
+    };
+  }
+
   private groupBy<T, K>(array: T[], keyFn: (item: T) => K): Map<K, T[]> {
     const map = new Map<K, T[]>();
     array.forEach(item => {

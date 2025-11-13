@@ -9,10 +9,12 @@ export function generateCSV(results: GatewayAnalysis[]): string {
   const csvLines: string[] = [
     // Header
     'fqdn,wallet,stake,status,baseDomain,domainPattern,domainGroupSize,ipAddress,ipRange,' +
-    'responseTime,serverHeader,certIssuer,registrationDate,clusterId,clusterSize,clusterRole,' +
-    'domainScore,networkScore,stakeScore,temporalScore,technicalScore,overallScore,suspicionNotes'
+    'country,countryCode,region,city,latitude,longitude,timezone,isp,asn,hosting,' +
+    'responseTime,serverHeader,httpVersion,certIssuer,registrationDate,' +
+    'domainScore,geoScore,networkScore,temporalScore,technicalScore,stakeScore,overallScore,' +
+    'clusterId,clusterSize,clusterRole,suspicionNotes'
   ];
-  
+
   // Data rows
   results.forEach(result => {
     csvLines.push([
@@ -25,19 +27,31 @@ export function generateCSV(results: GatewayAnalysis[]): string {
       result.domainGroupSize.toString(),
       result.ipAddress,
       result.ipRange,
+      result.country || 'N/A',
+      result.countryCode || 'N/A',
+      result.region || 'N/A',
+      result.city || 'N/A',
+      result.latitude?.toString() || 'N/A',
+      result.longitude?.toString() || 'N/A',
+      result.timezone || 'N/A',
+      result.isp || 'N/A',
+      result.asn || 'N/A',
+      result.hosting?.toString() || 'N/A',
       result.responseTime?.toString() || 'N/A',
       result.serverHeader || 'N/A',
+      result.httpVersion || 'N/A',
       result.certIssuer || 'N/A',
       result.registrationTimestamp ? new Date(result.registrationTimestamp).toISOString() : 'N/A',
+      result.domainCentralization.toFixed(3),
+      result.geographicCentralization.toFixed(3),
+      result.networkCentralization.toFixed(3),
+      result.temporalCentralization.toFixed(3),
+      result.technicalCentralization.toFixed(3),
+      result.stakeCentralization.toFixed(3),
+      result.overallCentralization.toFixed(3),
       result.clusterId,
       result.clusterSize.toString(),
       result.clusterRole,
-      result.domainCentralization.toFixed(3),
-      result.networkCentralization.toFixed(3),
-      result.stakeCentralization.toFixed(3),
-      result.temporalCentralization.toFixed(3),
-      result.technicalCentralization.toFixed(3),
-      result.overallCentralization.toFixed(3),
       result.suspicionNotes.join(';')
     ].map(escapeCSV).join(','));
   });
