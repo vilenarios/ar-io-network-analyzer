@@ -80,6 +80,9 @@ export function generateHTMLReport(
             -webkit-text-fill-color: transparent;
             margin: 0;
             flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .theme-toggle {
@@ -676,16 +679,15 @@ export function generateHTMLReport(
             }
 
             .header {
-                gap: 12px;
+                gap: 8px;
                 margin-bottom: 20px;
                 padding-bottom: 16px;
             }
 
             .header h1 {
-                font-size: 1.15rem;
+                font-size: 1rem;
                 line-height: 1.2;
-                word-break: keep-all;
-                overflow-wrap: normal;
+                white-space: nowrap;
             }
 
             .theme-toggle {
