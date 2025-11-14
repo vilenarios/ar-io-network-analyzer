@@ -212,24 +212,6 @@ export function generateHTMLReport(
             scrollbar-width: thin;
             scrollbar-color: var(--primary-color) transparent;
             position: relative;
-            padding-right: 36px;
-        }
-
-        /* Gradient hint for scrollable tabs */
-        .tabs::after {
-            content: '→';
-            position: absolute;
-            right: 4px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-size: 1.25rem;
-            color: var(--primary-color);
-            pointer-events: none;
-            background: var(--bg-color);
-            padding: 4px 8px;
-            border-radius: 4px;
-            border: 1px solid var(--border-color);
-            opacity: 0.9;
         }
 
         .tabs::-webkit-scrollbar {
