@@ -204,38 +204,25 @@ export function generateHTMLReport(
 
         .tabs {
             display: flex;
-            gap: 10px;
+            gap: 0;
             margin-bottom: 20px;
             border-bottom: 2px solid var(--border-color);
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
-            scrollbar-width: thin;
-            scrollbar-color: var(--primary-color) transparent;
+            scrollbar-width: none;
             position: relative;
         }
 
         .tabs::-webkit-scrollbar {
-            height: 6px;
-        }
-
-        .tabs::-webkit-scrollbar-thumb {
-            background: var(--primary-color);
-            border-radius: 4px;
-        }
-
-        .tabs::-webkit-scrollbar-thumb:hover {
-            background: #3B82F6;
-        }
-
-        .tabs::-webkit-scrollbar-track {
-            background: transparent;
+            display: none;
         }
 
         .tab {
-            padding: 12px 24px;
+            padding: 10px 16px;
             background: none;
             border: none;
-            font-size: 1rem;
+            border-right: 1px solid var(--border-color);
+            font-size: 0.875rem;
             font-weight: 500;
             color: var(--text-muted);
             cursor: pointer;
@@ -246,6 +233,10 @@ export function generateHTMLReport(
             min-height: 44px;
             display: flex;
             align-items: center;
+        }
+
+        .tab:last-child {
+            border-right: none;
         }
 
         .tab.active {
@@ -722,8 +713,8 @@ export function generateHTMLReport(
             }
 
             .tab {
-                padding: 10px 16px;
-                font-size: 0.875rem;
+                padding: 8px 12px;
+                font-size: 0.8rem;
             }
 
             .filters {
