@@ -79,17 +79,29 @@ export function generateHTMLReport(
         }
 
         .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
-            padding: 8px 16px;
-            border-radius: 8px;
+            padding: 10px;
+            border-radius: 50%;
             cursor: pointer;
             transition: all 0.3s ease;
+            font-size: 1.5rem;
+            line-height: 1;
+            width: 44px;
+            height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .theme-toggle:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
 
         .stats-grid {
@@ -200,14 +212,16 @@ export function generateHTMLReport(
 
         /* Gradient hint for scrollable tabs */
         .tabs::after {
-            content: '';
+            content: '→';
             position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 40px;
-            background: linear-gradient(to right, transparent, var(--bg-color));
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.25rem;
+            color: var(--primary-color);
             pointer-events: none;
+            opacity: 0.7;
+            text-shadow: -2px 0 8px var(--bg-color), 2px 0 8px var(--bg-color);
         }
 
         .tabs::-webkit-scrollbar {
@@ -385,12 +399,14 @@ export function generateHTMLReport(
 
         .reason-chip {
             display: inline-block;
-            padding: 2px 8px;
-            margin: 2px;
-            border-radius: 12px;
-            font-size: 0.75rem;
+            padding: 2px 6px;
+            margin: 1px 2px;
+            border-radius: 4px;
+            font-size: 0.7rem;
             background: var(--bg-color);
             color: var(--text-muted);
+            white-space: nowrap;
+            line-height: 1.4;
         }
 
         .cluster-details {
@@ -451,7 +467,7 @@ export function generateHTMLReport(
         
         .cluster-stats {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(2, 1fr);
             gap: 16px;
             margin-bottom: 16px;
         }
@@ -653,30 +669,35 @@ export function generateHTMLReport(
             }
 
             .theme-toggle {
-                font-size: 0.875rem;
-                padding: 8px 16px;
-                align-self: flex-end;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
-            }
-
-            .stat-card {
-                padding: 14px;
-            }
-
-            .stat-card h3 {
-                font-size: 0.7rem;
-            }
-
-            .stat-card .value {
+                top: 12px;
+                right: 12px;
+                width: 40px;
+                height: 40px;
                 font-size: 1.25rem;
             }
 
+            .stats-grid {
+                grid-template-columns: repeat(3, 1fr);
+                gap: 8px;
+            }
+
+            .stat-card {
+                padding: 10px 8px;
+            }
+
+            .stat-card h3 {
+                font-size: 0.65rem;
+                margin-bottom: 4px;
+            }
+
+            .stat-card .value {
+                font-size: 1.1rem;
+                margin-bottom: 2px;
+            }
+
             .stat-card .subtitle {
-                font-size: 0.7rem;
+                font-size: 0.6rem;
+                line-height: 1.2;
             }
 
             .charts-grid {
@@ -773,6 +794,15 @@ export function generateHTMLReport(
             .export-btn {
                 width: 100%;
             }
+
+            .cluster-stats {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+            }
+
+            .cluster-stat {
+                padding: 8px 10px;
+            }
         }
 
         /* Tablet */
@@ -816,9 +846,10 @@ export function generateHTMLReport(
 </head>
 <body>
     <div class="container">
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
+
         <div class="header">
             <h1>AR.IO Gateway Centralization Analysis</h1>
-            <button class="theme-toggle" onclick="toggleTheme()">🌓 Toggle Theme</button>
         </div>
 
         <div class="stats-grid">
@@ -924,9 +955,9 @@ export function generateHTMLReport(
 
         <div class="tabs">
             <button class="tab active" onclick="switchTab('summary')">Suspicious Gateways</button>
-            <button class="tab" onclick="switchTab('globe')">🌍 Globe View</button>
-            ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">🏢 Infrastructure</button>' : ''}
-            <button class="tab" onclick="switchTab('performance')">⚡ Performance</button>
+            <button class="tab" onclick="switchTab('globe')">Globe View</button>
+            ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">Infrastructure</button>' : ''}
+            <button class="tab" onclick="switchTab('performance')">Performance</button>
             <button class="tab" onclick="switchTab('detailed')">Detailed Analysis</button>
             <button class="tab" onclick="switchTab('clusters')">Cluster Analysis</button>
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
@@ -1370,7 +1401,6 @@ export function generateHTMLReport(
                     <thead>
                         <tr>
                             <th>Rank</th>
-                            <th>Cluster</th>
                             <th>Base Domain</th>
                             <th>Gateways</th>
                             <th>Cluster Total (ARIO)</th>
@@ -1387,7 +1417,6 @@ export function generateHTMLReport(
                             return `
                             <tr>
                                 <td>${index + 1}</td>
-                                <td>${cluster.clusterId}</td>
                                 <td>${clusterInfo?.baseDomain || '-'}</td>
                                 <td>${cluster.gatewayCount}</td>
                                 <td>${Math.round(cluster.clusterRewards / 1e6).toLocaleString()}</td>
