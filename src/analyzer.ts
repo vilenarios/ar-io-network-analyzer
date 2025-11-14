@@ -25,7 +25,8 @@ export class GatewayCentralizationAnalyzer {
   private results: GatewayAnalysis[] = [];
   private technicalFingerprints = new Map<string, TechnicalFingerprint>();
   private distributionData: { rewards?: Record<string, number>; totalEligibleGatewayReward?: number; totalDistributedRewards?: number } | null = null;
-  
+  private totalGatewaysInNetwork = 0;
+
   constructor(config: AnalyzerConfig) {
     this.config = config;
   }
@@ -40,11 +41,12 @@ export class GatewayCentralizationAnalyzer {
     try {
       // 1. Fetch all gateways
       console.log('📡 Fetching gateways...\n');
-      const gateways = this.config.useDemoData 
+      const { gateways, totalFetched } = this.config.useDemoData
         ? getDemoGateways()
         : await fetchGatewaysFromNetwork(this.config);
-      
-      console.log(`📊 Found ${gateways.length} gateways to analyze\n`);
+
+      this.totalGatewaysInNetwork = totalFetched;
+      console.log(`📊 Found ${gateways.length} gateways to analyze (${totalFetched} total in network)\n`);
       
       // Fetch distribution data for economic analysis
       if (!this.config.useDemoData) {
@@ -800,6 +802,7 @@ export class GatewayCentralizationAnalyzer {
     return {
       timestamp: new Date().toISOString(),
       totalGateways: this.results.length,
+      totalGatewaysInNetwork: this.totalGatewaysInNetwork,
       clusteredGateways: this.results.filter(g => g.clusterId).length,
       highCentralization: this.results.filter(g => g.overallCentralization > 0.7).length,
       clusters: clusterSummaries.sort((a, b) => b.avgScore - a.avgScore),

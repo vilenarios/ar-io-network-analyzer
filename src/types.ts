@@ -130,6 +130,7 @@ export interface InfrastructureImpact {
 export interface CentralizationReport {
   timestamp: string;
   totalGateways: number;
+  totalGatewaysInNetwork: number;
   clusteredGateways: number;
   highCentralization: number;
   clusters: ClusterSummary[];

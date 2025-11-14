@@ -636,25 +636,7 @@ export function generateHTMLReport(
             <div class="stat-card">
                 <h3>Total Gateways</h3>
                 <div class="value">${summary.totalGateways}</div>
-                <div class="status-breakdown">
-                    <div class="status-item">
-                        <span class="status-badge joined"></span>
-                        <span>${(() => {
-                            const joined = csvData.filter(gw => gw.status === 'joined').length;
-                            return joined;
-                        })()} joined</span>
-                    </div>
-                    ${(() => {
-                        const leaving = csvData.filter(gw => gw.status === 'leaving').length;
-                        if (leaving > 0) {
-                            return `<div class="status-item">
-                                <span class="status-badge leaving"></span>
-                                <span>${leaving} leaving</span>
-                            </div>`;
-                        }
-                        return '';
-                    })()}
-                </div>
+                <div class="subtitle">of ${summary.totalGatewaysInNetwork} total in network</div>
             </div>
             <div class="stat-card">
                 <h3>Clustered Gateways</h3>
@@ -697,6 +679,18 @@ export function generateHTMLReport(
                     return tlds.size;
                 })()}</div>
                 <div class="subtitle">ArNS resilience across TLDs</div>
+            </div>
+            <div class="stat-card">
+                <h3>Avg Response Time</h3>
+                <div class="value">${(() => {
+                    const responseTimes = csvData
+                        .map(gw => gw.responseTime)
+                        .filter(rt => rt && rt > 0);
+                    if (responseTimes.length === 0) return 'N/A';
+                    const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
+                    return Math.round(avg) + 'ms';
+                })()}</div>
+                <div class="subtitle">Gateway performance metric</div>
             </div>
             <div class="stat-card">
                 <h3>Top Country</h3>

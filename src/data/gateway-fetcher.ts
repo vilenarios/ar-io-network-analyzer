@@ -4,7 +4,7 @@
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
 
-export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise<Gateway[]> {
+export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise<{ gateways: Gateway[], totalFetched: number }> {
   try {
     // Dynamic import for AR.IO SDK
     const { ARIO } = await import('@ar.io/sdk');
@@ -19,11 +19,12 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
     let cursor: string | undefined;
     let hasMore = true;
     let pageCount = 0;
-    
+    let totalFetched = 0;
+
     while (hasMore) {
       pageCount++;
       console.log(`Fetching page ${pageCount}${cursor ? ` (cursor: ${cursor.substring(0, 10)}...)` : ''}`);
-      
+
       try {
         const response = await ario.getGateways({
           cursor,
@@ -31,8 +32,9 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
           sortOrder: 'desc',
           sortBy: 'operatorStake'
         });
-        
+
         console.log(`  Fetched ${response.items.length} gateways`);
+        totalFetched += response.items.length;
         
         for (const gateway of response.items) {
           // Only include joined gateways with valid FQDN
@@ -87,9 +89,11 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
         throw pageError;
       }
     }
-    
-    console.log(`\nTotal gateways fetched: ${gateways.length}`);
-    return gateways;
+
+    console.log(`\nTotal gateways in network: ${totalFetched}`);
+    console.log(`Joined gateways (analyzed): ${gateways.length}`);
+    console.log(`Leaving/other: ${totalFetched - gateways.length}`);
+    return { gateways, totalFetched };
     
   } catch (error) {
     console.error('Error loading AR.IO SDK:', error);
@@ -134,10 +138,10 @@ export async function fetchDistributions(epochIndex?: number): Promise<{ rewards
   }
 }
 
-export function getDemoGateways(): Gateway[] {
+export function getDemoGateways(): { gateways: Gateway[], totalFetched: number } {
   console.log('Using demo data (set USE_DEMO_DATA=false to use real network data)');
-  
-  return [
+
+  const gateways = [
     // Suspicious pattern 1: Sequential numbering on same domain
     { fqdn: 'ar1.innode.tech', wallet: 'wallet1', stake: 10000, status: 'joined', startTimestamp: Date.now() - 86400000 },
     { fqdn: 'ar2.innode.tech', wallet: 'wallet2', stake: 10000, status: 'joined', startTimestamp: Date.now() - 86300000 },
@@ -166,4 +170,6 @@ export function getDemoGateways(): Gateway[] {
     { fqdn: 'east.distributed.network', wallet: 'wallet13', stake: 50000, status: 'joined', startTimestamp: Date.now() - 10368000000 },
     { fqdn: 'west.distributed.network', wallet: 'wallet14', stake: 50000, status: 'joined', startTimestamp: Date.now() - 8640000000 },
   ];
+
+  return { gateways, totalFetched: gateways.length };
 }
