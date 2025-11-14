@@ -88,14 +88,14 @@ export function generateHTMLReport(
         .theme-toggle {
             background: var(--card-bg);
             border: 1px solid var(--border-color);
-            padding: 10px;
+            padding: 6px;
             border-radius: 50%;
             cursor: pointer;
             transition: all 0.3s ease;
-            font-size: 1.5rem;
+            font-size: 1.1rem;
             line-height: 1;
-            width: 44px;
-            height: 44px;
+            width: 32px;
+            height: 32px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -691,9 +691,10 @@ export function generateHTMLReport(
             }
 
             .theme-toggle {
-                width: 40px;
-                height: 40px;
-                font-size: 1.25rem;
+                width: 28px;
+                height: 28px;
+                font-size: 0.9rem;
+                padding: 4px;
             }
 
             .stats-grid {
