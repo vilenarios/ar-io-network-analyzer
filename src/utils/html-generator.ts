@@ -854,10 +854,6 @@ export function generateHTMLReport(
 
         /* Legacy tablet support */
         @media (max-width: 768px) {
-            .header {
-                flex-direction: column;
-            }
-
             .charts-grid {
                 grid-template-columns: 1fr;
             }
