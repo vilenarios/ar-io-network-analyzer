@@ -855,9 +855,9 @@ export function generateHTMLReport(
                 <div class="subtitle">${((summary.clusteredGateways / summary.totalGateways) * 100).toFixed(1)}% of total</div>
             </div>
             <div class="stat-card">
-                <h3>High Centralization</h3>
+                <h3>High-Risk Gateways</h3>
                 <div class="value">${summary.highCentralization}</div>
-                <div class="subtitle">Score > 0.7</div>
+                <div class="subtitle">Centralization score > 0.7</div>
             </div>
             <div class="stat-card">
                 <h3>Detected Clusters</h3>
