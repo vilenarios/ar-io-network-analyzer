@@ -79,9 +79,6 @@ export function generateHTMLReport(
         }
 
         .theme-toggle {
-            position: fixed;
-            top: 20px;
-            right: 20px;
             background: var(--card-bg);
             border: 1px solid var(--border-color);
             padding: 10px;
@@ -95,8 +92,8 @@ export function generateHTMLReport(
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 1000;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            flex-shrink: 0;
         }
 
         .theme-toggle:hover {
@@ -208,20 +205,24 @@ export function generateHTMLReport(
             scrollbar-width: thin;
             scrollbar-color: var(--primary-color) transparent;
             position: relative;
+            padding-right: 36px;
         }
 
         /* Gradient hint for scrollable tabs */
         .tabs::after {
             content: '→';
             position: absolute;
-            right: 8px;
+            right: 4px;
             top: 50%;
             transform: translateY(-50%);
             font-size: 1.25rem;
             color: var(--primary-color);
             pointer-events: none;
-            opacity: 0.7;
-            text-shadow: -2px 0 8px var(--bg-color), 2px 0 8px var(--bg-color);
+            background: var(--bg-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+            opacity: 0.9;
         }
 
         .tabs::-webkit-scrollbar {
@@ -291,20 +292,12 @@ export function generateHTMLReport(
 
         .search-box input {
             width: 100%;
-            padding: 12px 16px 12px 40px;
+            padding: 12px 16px;
             border: 1px solid var(--border-color);
             border-radius: 8px;
             font-size: 1rem;
             background: var(--card-bg);
             color: var(--text-color);
-        }
-
-        .search-box::before {
-            content: '🔍';
-            position: absolute;
-            left: 12px;
-            top: 50%;
-            transform: translateY(-50%);
         }
 
         .filters {
@@ -658,19 +651,18 @@ export function generateHTMLReport(
             }
 
             .header {
-                flex-direction: column;
+                flex-direction: row;
                 gap: 16px;
-                align-items: flex-start;
+                align-items: center;
             }
 
             .header h1 {
                 font-size: 1.5rem;
                 line-height: 1.3;
+                flex: 1;
             }
 
             .theme-toggle {
-                top: 12px;
-                right: 12px;
                 width: 40px;
                 height: 40px;
                 font-size: 1.25rem;
@@ -846,10 +838,9 @@ export function generateHTMLReport(
 </head>
 <body>
     <div class="container">
-        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
-
         <div class="header">
             <h1>AR.IO Gateway Centralization Analysis</h1>
+            <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
         </div>
 
         <div class="stats-grid">
