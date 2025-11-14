@@ -21,6 +21,7 @@ export interface GeoLocationData {
   asname?: string;
   hosting?: boolean;
   query?: string;
+  message?: string; // API error messages (e.g., rate limit)
 }
 
 // Cache geo lookups to avoid rate limiting

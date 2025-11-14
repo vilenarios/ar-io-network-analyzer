@@ -50,7 +50,7 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
               stats: gateway.stats,
               properties: JSON.stringify({
                 totalDelegatedStake: gateway.totalDelegatedStake,
-                delegates: gateway.delegates ? Object.keys(gateway.delegates).length : 0
+                delegates: (gateway as any).delegates ? Object.keys((gateway as any).delegates).length : 0
               })
             });
           }
@@ -67,19 +67,20 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
           
           // Convert from object format to array
           for (const [address, gateway] of Object.entries(allGateways)) {
-            if (gateway.status === 'joined' && gateway.settings?.fqdn) {
+            const gw = gateway as any; // Type assertion for SDK compatibility
+            if (gw.status === 'joined' && gw.settings?.fqdn) {
               gateways.push({
-                fqdn: gateway.settings.fqdn,
+                fqdn: gw.settings.fqdn,
                 wallet: address,
-                stake: gateway.operatorStake || 0,
-                status: gateway.status,
-                startTimestamp: gateway.startTimestamp,
-                endTimestamp: gateway.endTimestamp,
-                settings: gateway.settings,
-                stats: gateway.stats,
+                stake: gw.operatorStake || 0,
+                status: gw.status,
+                startTimestamp: gw.startTimestamp,
+                endTimestamp: gw.endTimestamp,
+                settings: gw.settings,
+                stats: gw.stats,
                 properties: JSON.stringify({
-                  totalDelegatedStake: gateway.totalDelegatedStake,
-                  delegates: gateway.delegates ? Object.keys(gateway.delegates).length : 0
+                  totalDelegatedStake: gw.totalDelegatedStake,
+                  delegates: gw.delegates ? Object.keys(gw.delegates).length : 0
                 })
               });
             }
@@ -107,22 +108,23 @@ export async function fetchDistributions(epochIndex?: number): Promise<{ rewards
     const ario = ARIO.mainnet();
     
     console.log('Fetching distribution data...');
-    const distributions = await ario.getDistributions(epochIndex ? { epochIndex } : {});
+    const distributions = await ario.getDistributions(epochIndex ? { epochIndex } : undefined);
     
     // Log the structure to understand the data
+    const dist = distributions as any; // Type assertion for SDK compatibility
     console.log('Distribution data structure:', {
       hasDistributions: !!distributions,
       keys: distributions ? Object.keys(distributions) : [],
-      totalEligibleRewards: distributions?.totalEligibleRewards,
-      totalEligibleGatewayReward: distributions?.totalEligibleGatewayReward,
-      totalDistributedRewards: distributions?.totalDistributedRewards,
-      hasRewards: !!distributions?.rewards,
-      rewardsKeys: distributions?.rewards ? Object.keys(distributions.rewards) : []
+      totalEligibleRewards: dist?.totalEligibleRewards,
+      totalEligibleGatewayReward: dist?.totalEligibleGatewayReward,
+      totalDistributedRewards: dist?.totalDistributedRewards,
+      hasRewards: !!dist?.rewards,
+      rewardsKeys: dist?.rewards ? Object.keys(dist.rewards) : []
     });
-    
+
     // Log rewards.eligible structure if it exists
-    if (distributions?.rewards?.eligible) {
-      const eligible = distributions.rewards.eligible;
+    if (dist?.rewards?.eligible) {
+      const eligible = dist.rewards.eligible;
       console.log('Eligible rewards structure:', {
         type: typeof eligible,
         isArray: Array.isArray(eligible),
@@ -131,7 +133,7 @@ export async function fetchDistributions(epochIndex?: number): Promise<{ rewards
       });
     }
     
-    return distributions;
+    return distributions as any;
   } catch (error) {
     console.error('Error fetching distributions:', error);
     return null;

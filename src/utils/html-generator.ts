@@ -94,7 +94,7 @@ export function generateHTMLReport(
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 16px;
             margin-bottom: 30px;
         }
@@ -162,7 +162,7 @@ export function generateHTMLReport(
 
         .charts-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            grid-template-columns: repeat(2, 1fr);
             gap: 20px;
             margin-bottom: 30px;
         }
@@ -172,6 +172,12 @@ export function generateHTMLReport(
             padding: 24px;
             border-radius: 12px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            min-width: 0; /* Allow charts to shrink below content size */
+        }
+
+        .chart-card canvas {
+            max-width: 100%;
+            height: auto !important;
         }
 
         .chart-card h2 {
@@ -188,16 +194,33 @@ export function generateHTMLReport(
             overflow-x: auto;
             -webkit-overflow-scrolling: touch;
             scrollbar-width: thin;
-            scrollbar-color: var(--border-color) transparent;
+            scrollbar-color: var(--primary-color) transparent;
+            position: relative;
+        }
+
+        /* Gradient hint for scrollable tabs */
+        .tabs::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            top: 0;
+            bottom: 0;
+            width: 40px;
+            background: linear-gradient(to right, transparent, var(--bg-color));
+            pointer-events: none;
         }
 
         .tabs::-webkit-scrollbar {
-            height: 4px;
+            height: 6px;
         }
 
         .tabs::-webkit-scrollbar-thumb {
-            background: var(--border-color);
+            background: var(--primary-color);
             border-radius: 4px;
+        }
+
+        .tabs::-webkit-scrollbar-thumb:hover {
+            background: #3B82F6;
         }
 
         .tabs::-webkit-scrollbar-track {
@@ -670,6 +693,10 @@ export function generateHTMLReport(
                 font-size: 1rem;
             }
 
+            .chart-card > div[style*="height"] {
+                height: 250px !important;
+            }
+
             .tab {
                 padding: 10px 16px;
                 font-size: 0.875rem;
@@ -736,6 +763,15 @@ export function generateHTMLReport(
             .score-badge {
                 font-size: 0.75rem;
                 padding: 4px 8px;
+            }
+
+            .export-buttons {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .export-btn {
+                width: 100%;
             }
         }
 
@@ -806,7 +842,9 @@ export function generateHTMLReport(
                 <div class="value">${summary.clusters.length}</div>
                 <div class="subtitle">Unique groups</div>
             </div>
-            ${summary.economicImpact ? `
+            ${
+              summary.economicImpact
+                ? `
             <div class="stat-card">
                 <h3>Epoch Rewards</h3>
                 <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
@@ -817,31 +855,35 @@ export function generateHTMLReport(
                 <div class="value">${Math.round(summary.economicImpact.topCentralizedRewards / 1e6).toLocaleString()} $ARIO</div>
                 <div class="subtitle">${summary.economicImpact.topCentralizedPercentage.toFixed(1)}% of total</div>
             </div>
-            ` : ''}
-            ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+            `
+                : ''
+            }
+            ${
+              summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
+                ? `
             <div class="stat-card">
                 <h3>Unique TLDs</h3>
                 <div class="value">${(() => {
-                    const tlds = new Set();
-                    csvData.forEach(gw => {
-                        if (gw.baseDomain) {
-                            const tld = gw.baseDomain.substring(gw.baseDomain.lastIndexOf('.'));
-                            tlds.add(tld);
-                        }
-                    });
-                    return tlds.size;
+                  const tlds = new Set();
+                  csvData.forEach((gw) => {
+                    if (gw.baseDomain) {
+                      const tld = gw.baseDomain.substring(gw.baseDomain.lastIndexOf('.'));
+                      tlds.add(tld);
+                    }
+                  });
+                  return tlds.size;
                 })()}</div>
                 <div class="subtitle">ArNS resilience across TLDs</div>
             </div>
             <div class="stat-card">
                 <h3>Avg Response Time</h3>
                 <div class="value">${(() => {
-                    const responseTimes = csvData
-                        .map(gw => gw.responseTime)
-                        .filter(rt => rt && rt > 0);
-                    if (responseTimes.length === 0) return 'N/A';
-                    const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
-                    return Math.round(avg) + 'ms';
+                  const responseTimes = csvData
+                    .map((gw) => gw.responseTime)
+                    .filter((rt): rt is number => rt !== undefined && rt > 0);
+                  if (responseTimes.length === 0) return 'N/A';
+                  const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
+                  return Math.round(avg) + 'ms';
                 })()}</div>
                 <div class="subtitle">Gateway performance metric</div>
             </div>
@@ -860,7 +902,9 @@ export function generateHTMLReport(
                 <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
                 <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways (${summary.infrastructureImpact.topProviders[0]?.percentage.toFixed(1) || '0'}%)</div>
             </div>
-            ` : ''}
+            `
+                : ''
+            }
         </div>
 
         <div class="charts-grid">
@@ -879,7 +923,7 @@ export function generateHTMLReport(
         </div>
 
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('summary')">Summary Report</button>
+            <button class="tab active" onclick="switchTab('summary')">Suspicious Gateways</button>
             <button class="tab" onclick="switchTab('globe')">🌍 Globe View</button>
             ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">🏢 Infrastructure</button>' : ''}
             <button class="tab" onclick="switchTab('performance')">⚡ Performance</button>
@@ -911,27 +955,36 @@ export function generateHTMLReport(
                     </tr>
                 </thead>
                 <tbody>
-                    ${summary.topSuspicious.map((gateway, index) => `
+                    ${summary.topSuspicious
+                      .map(
+                        (gateway, index) => `
                         <tr data-score="${gateway.score}">
                             <td>${index + 1}</td>
                             <td>${gateway.fqdn}</td>
                             <td>${gateway.score.toFixed(3)}</td>
                             <td>
                                 <span class="score-badge ${
-                                    gateway.score > 0.7 ? 'score-high' : 
-                                    gateway.score > 0.4 ? 'score-medium' : 
-                                    'score-low'
+                                  gateway.score > 0.7
+                                    ? 'score-high'
+                                    : gateway.score > 0.4
+                                      ? 'score-medium'
+                                      : 'score-low'
                                 }">
                                     ${gateway.score > 0.7 ? 'High' : gateway.score > 0.4 ? 'Medium' : 'Low'}
                                 </span>
                             </td>
                             <td>
-                                ${gateway.reasons.map(reason => 
-                                    `<span class="reason-chip">${reason.replace(/_/g, ' ')}</span>`
-                                ).join('')}
+                                ${gateway.reasons
+                                  .map(
+                                    (reason) =>
+                                      `<span class="reason-chip">${reason.replace(/_/g, ' ')}</span>`
+                                  )
+                                  .join('')}
                             </td>
                         </tr>
-                    `).join('')}
+                    `
+                      )
+                      .join('')}
                 </tbody>
             </table>
             </div>
@@ -1019,12 +1072,14 @@ export function generateHTMLReport(
                 </div>
             </div>
             <p style="color: var(--text-muted); font-size: 0.875rem; margin-top: 12px;">
-                Showing ${csvData.filter(g => g.latitude && g.longitude).length} gateways with geographic data.
+                Showing ${csvData.filter((g) => g.latitude && g.longitude).length} gateways with geographic data.
                 Point size represents stake amount. Click any point for details.
             </p>
         </div>
 
-        ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+        ${
+          summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
+            ? `
         <div id="infrastructure-content" class="tab-content">
             <h2>Infrastructure Analysis</h2>
 
@@ -1102,9 +1157,11 @@ export function generateHTMLReport(
                         </tr>
                     </thead>
                     <tbody>
-                        ${summary.infrastructureImpact.topProviders.slice(0, 20).map((provider, index) => {
+                        ${summary.infrastructureImpact.topProviders
+                          .slice(0, 20)
+                          .map((provider, index) => {
                             // Determine if it's a datacenter (check first gateway from this provider)
-                            const sampleGateway = csvData.find(g => g.isp === provider.name);
+                            const sampleGateway = csvData.find((g) => g.isp === provider.name);
                             const isDatacenter = sampleGateway?.hosting === true;
                             return `
                             <tr>
@@ -1113,16 +1170,20 @@ export function generateHTMLReport(
                                 <td>${provider.count}</td>
                                 <td>
                                     <span class="score-badge ${
-                                        provider.percentage > 10 ? 'score-high' :
-                                        provider.percentage > 5 ? 'score-medium' :
-                                        'score-low'
+                                      provider.percentage > 10
+                                        ? 'score-high'
+                                        : provider.percentage > 5
+                                          ? 'score-medium'
+                                          : 'score-low'
                                     }">
                                         ${provider.percentage.toFixed(2)}%
                                     </span>
                                 </td>
                                 <td>${isDatacenter ? '🏢 Datacenter' : '🏠 Other'}</td>
                             </tr>
-                        `}).join('')}
+                        `;
+                          })
+                          .join('')}
                     </tbody>
                 </table>
                 </div>
@@ -1143,7 +1204,10 @@ export function generateHTMLReport(
                         </tr>
                     </thead>
                     <tbody>
-                        ${summary.infrastructureImpact.countryDistribution.slice(0, 20).map((country, index) => `
+                        ${summary.infrastructureImpact.countryDistribution
+                          .slice(0, 20)
+                          .map(
+                            (country, index) => `
                             <tr>
                                 <td>${index + 1}</td>
                                 <td>${country.country}</td>
@@ -1151,21 +1215,27 @@ export function generateHTMLReport(
                                 <td>${country.count}</td>
                                 <td>
                                     <span class="score-badge ${
-                                        country.percentage > 20 ? 'score-high' :
-                                        country.percentage > 10 ? 'score-medium' :
-                                        'score-low'
+                                      country.percentage > 20
+                                        ? 'score-high'
+                                        : country.percentage > 10
+                                          ? 'score-medium'
+                                          : 'score-low'
                                     }">
                                         ${country.percentage.toFixed(2)}%
                                     </span>
                                 </td>
                             </tr>
-                        `).join('')}
+                        `
+                          )
+                          .join('')}
                     </tbody>
                 </table>
                 </div>
             </div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
 
         <div id="detailed-content" class="tab-content">
             <h2>All Gateway Analysis</h2>
@@ -1187,7 +1257,9 @@ export function generateHTMLReport(
                     </tr>
                 </thead>
                 <tbody>
-                    ${csvData.map(gateway => `
+                    ${csvData
+                      .map(
+                        (gateway) => `
                         <tr>
                             <td>${gateway.fqdn}</td>
                             <td>${gateway.wallet.substring(0, 8)}...</td>
@@ -1198,15 +1270,19 @@ export function generateHTMLReport(
                             <td>${gateway.clusterId || '-'}</td>
                             <td>
                                 <span class="score-badge ${
-                                    gateway.overallCentralization > 0.7 ? 'score-high' : 
-                                    gateway.overallCentralization > 0.4 ? 'score-medium' : 
-                                    'score-low'
+                                  gateway.overallCentralization > 0.7
+                                    ? 'score-high'
+                                    : gateway.overallCentralization > 0.4
+                                      ? 'score-medium'
+                                      : 'score-low'
                                 }">
                                     ${gateway.overallCentralization.toFixed(3)}
                                 </span>
                             </td>
                         </tr>
-                    `).join('')}
+                    `
+                      )
+                      .join('')}
                 </tbody>
             </table>
             </div>
@@ -1214,7 +1290,9 @@ export function generateHTMLReport(
 
         <div id="clusters-content" class="tab-content">
             <h2>Cluster Analysis</h2>
-            ${summary.clusters.map((cluster, idx) => `
+            ${summary.clusters
+              .map(
+                (cluster, idx) => `
                 <div class="cluster-details">
                     <h3>#${idx + 1}: ${cluster.baseDomain} Cluster</h3>
                     <div class="cluster-stats">
@@ -1234,32 +1312,42 @@ export function generateHTMLReport(
                             <div class="cluster-stat-label">Avg Score</div>
                             <div class="cluster-stat-value">
                                 <span class="score-badge ${
-                                    cluster.avgScore > 0.7 ? 'score-high' : 
-                                    cluster.avgScore > 0.4 ? 'score-medium' : 
-                                    'score-low'
+                                  cluster.avgScore > 0.7
+                                    ? 'score-high'
+                                    : cluster.avgScore > 0.4
+                                      ? 'score-medium'
+                                      : 'score-low'
                                 }">
                                     ${cluster.avgScore.toFixed(3)}
                                 </span>
                             </div>
                         </div>
-                        ${cluster.totalRewards ? `
+                        ${
+                          cluster.totalRewards
+                            ? `
                         <div class="cluster-stat">
                             <div class="cluster-stat-label">Est. ARIO Rewards</div>
                             <div class="cluster-stat-value">${Math.round(cluster.totalRewards / 1e6).toLocaleString()}</div>
                         </div>
-                        ` : ''}
+                        `
+                            : ''
+                        }
                     </div>
                     <div class="gateway-list">
                         <p style="margin-top: 0; font-weight: 600;">Gateway URLs:</p>
                         <ul>
-                            ${cluster.gateways.map(gw => `<li title="${gw}">${gw}</li>`).join('')}
+                            ${cluster.gateways.map((gw) => `<li title="${gw}">${gw}</li>`).join('')}
                         </ul>
                     </div>
                 </div>
-            `).join('')}
+            `
+              )
+              .join('')}
         </div>
 
-        ${summary.economicImpact ? `
+        ${
+          summary.economicImpact
+            ? `
         <div id="economic-content" class="tab-content">
             <h2>Economic Impact Analysis (Estimated)</h2>
             <div class="economic-summary">
@@ -1291,8 +1379,11 @@ export function generateHTMLReport(
                         </tr>
                     </thead>
                     <tbody>
-                        ${summary.economicImpact.rewardsByCluster.map((cluster, index) => {
-                            const clusterInfo = summary.clusters.find(c => c.id === cluster.clusterId);
+                        ${summary.economicImpact.rewardsByCluster
+                          .map((cluster, index) => {
+                            const clusterInfo = summary.clusters.find(
+                              (c) => c.id === cluster.clusterId
+                            );
                             return `
                             <tr>
                                 <td>${index + 1}</td>
@@ -1302,20 +1393,28 @@ export function generateHTMLReport(
                                 <td>${Math.round(cluster.clusterRewards / 1e6).toLocaleString()}</td>
                                 <td>
                                     <span class="score-badge ${
-                                        cluster.percentageOfTotal > 5 ? 'score-high' : 
-                                        cluster.percentageOfTotal > 2 ? 'score-medium' : 
-                                        'score-low'
+                                      cluster.percentageOfTotal > 5
+                                        ? 'score-high'
+                                        : cluster.percentageOfTotal > 2
+                                          ? 'score-medium'
+                                          : 'score-low'
                                     }">
                                         ${cluster.percentageOfTotal.toFixed(2)}%
                                     </span>
                                 </td>
                                 <td>
-                                    ${cluster.percentageOfTotal > 5 ? '🔴 High' : 
-                                      cluster.percentageOfTotal > 2 ? '🟡 Medium' : 
-                                      '🟢 Low'}
+                                    ${
+                                      cluster.percentageOfTotal > 5
+                                        ? '🔴 High'
+                                        : cluster.percentageOfTotal > 2
+                                          ? '🟡 Medium'
+                                          : '🟢 Low'
+                                    }
                                 </td>
                             </tr>
-                        `}).join('')}
+                        `;
+                          })
+                          .join('')}
                     </tbody>
                 </table>
                 </div>
@@ -1329,7 +1428,9 @@ export function generateHTMLReport(
                 </div>
             </div>
         </div>
-        ` : ''}
+        `
+            : ''
+        }
 
         <div id="performance-content" class="tab-content">
             <h2>⚡ Gateway Performance Analysis</h2>
@@ -1381,12 +1482,17 @@ export function generateHTMLReport(
                 </thead>
                 <tbody>
                     ${(() => {
-                        const withResponseTime = csvData
-                            .filter(gw => gw.responseTime && gw.responseTime > 0)
-                            .sort((a, b) => a.responseTime - b.responseTime)
-                            .slice(0, 20);
+                      const withResponseTime = csvData
+                        .filter(
+                          (gw): gw is typeof gw & { responseTime: number } =>
+                            gw.responseTime !== undefined && gw.responseTime > 0
+                        )
+                        .sort((a, b) => a.responseTime - b.responseTime)
+                        .slice(0, 20);
 
-                        return withResponseTime.map((gw, idx) => `
+                      return withResponseTime
+                        .map(
+                          (gw, idx) => `
                             <tr>
                                 <td>${idx + 1}</td>
                                 <td><a href="https://${gw.fqdn}" target="_blank">${gw.fqdn}</a></td>
@@ -1395,18 +1501,24 @@ export function generateHTMLReport(
                                 <td>${gw.httpVersion || 'N/A'}</td>
                                 <td>${gw.country || 'N/A'}</td>
                             </tr>
-                        `).join('');
+                        `
+                        )
+                        .join('');
                     })()}
                 </tbody>
             </table>
             </div>
         </div>
 
-        ${process.env.SKIP_GEO ? '' : `
+        ${
+          process.env.SKIP_GEO
+            ? ''
+            : `
         <div style="background: var(--bg-color); padding: 16px; border-radius: 8px; margin-top: 20px; font-size: 0.875rem; color: var(--text-muted);">
             <strong>Note:</strong> Geographic data may be incomplete due to API rate limits. For best results, run with smaller gateway sets or use SKIP_GEO=true to disable geographic analysis.
         </div>
-        `}
+        `
+        }
 
         <div class="export-buttons">
             <button class="export-btn primary" onclick="downloadFile('${csvFilename}')">📥 Download CSV</button>
@@ -1497,8 +1609,8 @@ export function generateHTMLReport(
         // Distribution chart
         const distributionData = {
             high: ${summary.highCentralization},
-            medium: ${summary.topSuspicious.filter(g => g.score > 0.4 && g.score <= 0.7).length},
-            low: ${summary.totalGateways - summary.highCentralization - summary.topSuspicious.filter(g => g.score > 0.4 && g.score <= 0.7).length}
+            medium: ${summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length},
+            low: ${summary.totalGateways - summary.highCentralization - summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length}
         };
 
         const distributionCtx = document.getElementById('distributionChart').getContext('2d');
@@ -1574,7 +1686,9 @@ export function generateHTMLReport(
 
         // Infrastructure charts
         let hostingTypeChart, providersChart, tldChart;
-        ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+        ${
+          summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
+            ? `
         const infrastructureData = ${JSON.stringify(summary.infrastructureImpact)};
 
         // Hosting Type Pie Chart
@@ -1711,7 +1825,9 @@ export function generateHTMLReport(
                 }
             });
         }
-        ` : ''}
+        `
+            : ''
+        }
 
         // Performance charts
         let responseTimeChart, serverSoftwareChart, httpVersionChart, certIssuerChart;

@@ -196,12 +196,17 @@ export class GatewayCentralizationAnalyzer {
       stake: gateway.stake,
       status: gateway.status,
       registrationTimestamp: gateway.startTimestamp,
-      
+
       ...domainInfo,
+      baseDomain: domainInfo.baseDomain || gateway.fqdn, // Ensure baseDomain is always defined
+      domainPattern: domainInfo.domainPattern || 'unknown',
+      domainGroupSize: domainInfo.domainGroupSize || 0,
       ...networkInfo,
+      ipAddress: networkInfo.ipAddress || 'unknown',
+      ipRange: networkInfo.ipRange || 'unknown',
       ...geoInfo,
       ...technicalInfo,
-      
+
       // Scores will be calculated later
       domainCentralization: 0,
       networkCentralization: 0,
@@ -210,10 +215,10 @@ export class GatewayCentralizationAnalyzer {
       technicalCentralization: 0,
       geographicCentralization: 0,
       overallCentralization: 0,
-      
+
       clusterId: '',
       clusterSize: 0,
-      clusterRole: 'primary',
+      clusterRole: 'primary' as const,
       suspicionNotes
     };
   }
@@ -340,7 +345,7 @@ export class GatewayCentralizationAnalyzer {
             expires: new Date(cert.valid_to),
             subject: cert.subject?.CN || 'Unknown',
           };
-          fingerprint.tlsVersion = socket.getProtocol();
+          fingerprint.tlsVersion = socket.getProtocol() || undefined;
           fingerprint.tlsCiphers = [socket.getCipher()?.name].filter(Boolean) as string[];
           reqWithFingerprint.fingerprint = fingerprint;
         }
