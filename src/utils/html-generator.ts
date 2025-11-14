@@ -1106,7 +1106,7 @@ export function generateHTMLReport(
             <h2>Infrastructure Analysis</h2>
 
             <!-- Quick Stats -->
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 30px;">
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 30px;">
                 <div class="stat-card">
                     <h3>Datacenter Hosted</h3>
                     <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
@@ -1116,6 +1116,11 @@ export function generateHTMLReport(
                     <h3>Top Provider</h3>
                     <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
                     <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Top Country</h3>
+                    <div class="value">${summary.infrastructureImpact.countryDistribution[0]?.country || 'N/A'}</div>
+                    <div class="subtitle">${summary.infrastructureImpact.countryDistribution[0]?.count || 0} gateways (${summary.infrastructureImpact.countryDistribution[0]?.percentage.toFixed(1) || '0'}%)</div>
                 </div>
                 <div class="stat-card">
                     <h3>Countries</h3>
