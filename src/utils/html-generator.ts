@@ -59,6 +59,7 @@ export function generateHTMLReport(
             max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
+            width: 100%;
         }
 
         .header {
@@ -184,6 +185,23 @@ export function generateHTMLReport(
             gap: 10px;
             margin-bottom: 20px;
             border-bottom: 2px solid var(--border-color);
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: var(--border-color) transparent;
+        }
+
+        .tabs::-webkit-scrollbar {
+            height: 4px;
+        }
+
+        .tabs::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        .tabs::-webkit-scrollbar-track {
+            background: transparent;
         }
 
         .tab {
@@ -196,6 +214,11 @@ export function generateHTMLReport(
             cursor: pointer;
             transition: all 0.3s ease;
             position: relative;
+            white-space: nowrap;
+            flex-shrink: 0;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
         }
 
         .tab.active {
@@ -270,9 +293,16 @@ export function generateHTMLReport(
             border-color: var(--primary-color);
         }
 
+        .table-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 20px;
+        }
+
         .data-table {
             width: 100%;
             border-collapse: collapse;
+            min-width: 600px;
         }
 
         .data-table th,
@@ -582,45 +612,168 @@ export function generateHTMLReport(
             color: var(--text-muted);
         }
 
-        @media (max-width: 768px) {
+        /* Mobile First - Small Phones */
+        @media (max-width: 640px) {
+            .container {
+                padding: 16px 12px;
+            }
+
             .header {
                 flex-direction: column;
-                gap: 20px;
+                gap: 16px;
+                align-items: flex-start;
+            }
+
+            .header h1 {
+                font-size: 1.5rem;
+                line-height: 1.3;
+            }
+
+            .theme-toggle {
+                font-size: 0.875rem;
+                padding: 8px 16px;
+                align-self: flex-end;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+
+            .stat-card {
+                padding: 14px;
+            }
+
+            .stat-card h3 {
+                font-size: 0.7rem;
+            }
+
+            .stat-card .value {
+                font-size: 1.25rem;
+            }
+
+            .stat-card .subtitle {
+                font-size: 0.7rem;
+            }
+
+            .charts-grid {
+                grid-template-columns: 1fr;
+                gap: 16px;
+            }
+
+            .chart-card {
+                padding: 16px;
+            }
+
+            .chart-card h2,
+            .chart-card h3 {
+                font-size: 1rem;
+            }
+
+            .tab {
+                padding: 10px 16px;
+                font-size: 0.875rem;
+            }
+
+            .filters {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .filter-btn {
+                width: 100%;
+                padding: 10px;
+                font-size: 0.875rem;
+            }
+
+            .data-table {
+                font-size: 0.875rem;
+            }
+
+            .data-table th,
+            .data-table td {
+                padding: 8px 6px;
+            }
+
+            .globe-container {
+                height: 400px;
+            }
+
+            .globe-controls {
+                left: 8px;
+                top: 8px;
+                padding: 10px;
+                font-size: 0.75rem;
+                min-width: auto;
+                max-width: 140px;
+                opacity: 0.95;
+            }
+
+            .globe-controls label {
+                font-size: 0.75rem;
+            }
+
+            .globe-legend {
+                bottom: 8px;
+                right: 8px;
+                padding: 10px;
+                font-size: 0.75rem;
+            }
+
+            .globe-info {
+                top: 8px;
+                right: 8px;
+                max-width: 180px;
+                font-size: 0.875rem;
+                padding: 12px;
+            }
+
+            .search-box input {
+                font-size: 0.875rem;
+                padding: 10px;
+            }
+
+            .score-badge {
+                font-size: 0.75rem;
+                padding: 4px 8px;
+            }
+        }
+
+        /* Tablet */
+        @media (min-width: 641px) and (max-width: 1024px) {
+            .container {
+                padding: 24px 16px;
             }
 
             .header h1 {
                 font-size: 2rem;
             }
 
-            .charts-grid {
-                grid-template-columns: 1fr;
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
 
-            .filters {
-                flex-direction: column;
+            .charts-grid {
+                grid-template-columns: repeat(2, 1fr);
             }
 
             .globe-container {
                 height: 500px;
             }
 
-            .globe-controls {
-                left: 10px;
-                top: 10px;
-                padding: 12px;
-                min-width: 150px;
+            .data-table {
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Legacy tablet support */
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
             }
 
-            .globe-legend {
-                bottom: 10px;
-                right: 10px;
-                padding: 12px;
-            }
-
-            .globe-info {
-                top: 10px;
-                right: 10px;
-                max-width: 200px;
+            .charts-grid {
+                grid-template-columns: 1fr;
             }
         }
     </style>
@@ -746,6 +899,7 @@ export function generateHTMLReport(
                 <button class="filter-btn" onclick="filterByScore('medium')">Medium Risk (0.4-0.7)</button>
                 <button class="filter-btn" onclick="filterByScore('low')">Low Risk (<0.4)</button>
             </div>
+            <div class="table-wrapper">
             <table id="summaryTable" class="data-table">
                 <thead>
                     <tr>
@@ -780,6 +934,7 @@ export function generateHTMLReport(
                     `).join('')}
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="globe-content" class="tab-content">
@@ -935,6 +1090,7 @@ export function generateHTMLReport(
             <!-- ISP Distribution Table -->
             <div style="margin-top: 30px;">
                 <h3 style="margin-bottom: 16px;">ISP/Hosting Provider Distribution</h3>
+                <div class="table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -969,11 +1125,13 @@ export function generateHTMLReport(
                         `}).join('')}
                     </tbody>
                 </table>
+                </div>
             </div>
 
             <!-- Country Distribution Table -->
             <div style="margin-top: 30px;">
                 <h3 style="margin-bottom: 16px;">Geographic Distribution by Country</h3>
+                <div class="table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -1004,6 +1162,7 @@ export function generateHTMLReport(
                         `).join('')}
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
         ` : ''}
@@ -1013,6 +1172,7 @@ export function generateHTMLReport(
             <div class="search-box">
                 <input type="text" id="detailedSearch" placeholder="Search all gateways..." onkeyup="filterDetailedTable()">
             </div>
+            <div class="table-wrapper">
             <table id="detailedTable" class="data-table">
                 <thead>
                     <tr>
@@ -1049,6 +1209,7 @@ export function generateHTMLReport(
                     `).join('')}
                 </tbody>
             </table>
+            </div>
         </div>
 
         <div id="clusters-content" class="tab-content">
@@ -1114,8 +1275,9 @@ export function generateHTMLReport(
                         <div class="subtitle">Each gateway's eligible reward this epoch</div>
                     </div>
                 </div>
-                
+
                 <h3 style="margin: 20px 0;">Estimated Rewards by Centralized Clusters</h3>
+                <div class="table-wrapper">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -1156,7 +1318,8 @@ export function generateHTMLReport(
                         `}).join('')}
                     </tbody>
                 </table>
-                
+                </div>
+
                 <div class="cluster-details" style="margin-top: 30px;">
                     <h3>Summary Statistics</h3>
                     <p><strong>Total ARIO going to centralized clusters:</strong> ${Math.round(summary.economicImpact.topCentralizedRewards / 1e6).toLocaleString()} ARIO</p>
@@ -1204,6 +1367,7 @@ export function generateHTMLReport(
             </div>
 
             <h3 style="margin-top: 30px;">Top 20 Fastest Gateways</h3>
+            <div class="table-wrapper">
             <table class="data-table">
                 <thead>
                     <tr>
@@ -1235,6 +1399,7 @@ export function generateHTMLReport(
                     })()}
                 </tbody>
             </table>
+            </div>
         </div>
 
         ${process.env.SKIP_GEO ? '' : `
