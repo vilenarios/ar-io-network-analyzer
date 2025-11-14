@@ -521,6 +521,27 @@ export function generateHTMLReport(
             text-align: center;
         }
 
+        .footer {
+            text-align: center;
+            padding: 24px 20px;
+            margin-top: 40px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .footer a {
+            color: var(--primary-color);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+
+        .footer a:hover {
+            color: var(--secondary-color);
+            text-decoration: underline;
+        }
+
         /* Globe visualization styles */
         .globe-container {
             position: relative;
@@ -1558,6 +1579,10 @@ export function generateHTMLReport(
             Generated on ${new Date(summary.timestamp).toLocaleString()}
         </div>
     </div>
+
+    <footer class="footer">
+        Made with ❤️ by <a href="https://github.com/vilenarios/ar-io-network-analyzer" target="_blank" rel="noopener noreferrer">Vilenarios</a>
+    </footer>
 
     <script>
         // Theme toggle
