@@ -79,7 +79,7 @@ export function generateHTMLReport(
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             margin: 0;
-            white-space: nowrap;
+            flex: 1;
         }
 
         .theme-toggle {
@@ -682,8 +682,10 @@ export function generateHTMLReport(
             }
 
             .header h1 {
-                font-size: 1.3rem;
+                font-size: 1.15rem;
                 line-height: 1.2;
+                word-break: keep-all;
+                overflow-wrap: normal;
             }
 
             .theme-toggle {
