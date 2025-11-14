@@ -729,6 +729,7 @@ export function generateHTMLReport(
             <button class="tab active" onclick="switchTab('summary')">Summary Report</button>
             <button class="tab" onclick="switchTab('globe')">🌍 Globe View</button>
             ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">🏢 Infrastructure</button>' : ''}
+            <button class="tab" onclick="switchTab('performance')">⚡ Performance</button>
             <button class="tab" onclick="switchTab('detailed')">Detailed Analysis</button>
             <button class="tab" onclick="switchTab('clusters')">Cluster Analysis</button>
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
@@ -1167,6 +1168,75 @@ export function generateHTMLReport(
         </div>
         ` : ''}
 
+        <div id="performance-content" class="tab-content">
+            <h2>⚡ Gateway Performance Analysis</h2>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>Response Time Distribution</h3>
+                    <div style="height: 300px;">
+                        <canvas id="responseTimeChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3>Server Software</h3>
+                    <div style="height: 300px;">
+                        <canvas id="serverSoftwareChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>HTTP Version Adoption</h3>
+                    <div style="height: 300px;">
+                        <canvas id="httpVersionChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3>SSL Certificate Issuers</h3>
+                    <div style="height: 300px;">
+                        <canvas id="certIssuerChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 30px;">Top 20 Fastest Gateways</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Gateway</th>
+                        <th>Response Time</th>
+                        <th>Server</th>
+                        <th>HTTP Version</th>
+                        <th>Country</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${(() => {
+                        const withResponseTime = csvData
+                            .filter(gw => gw.responseTime && gw.responseTime > 0)
+                            .sort((a, b) => a.responseTime - b.responseTime)
+                            .slice(0, 20);
+
+                        return withResponseTime.map((gw, idx) => `
+                            <tr>
+                                <td>${idx + 1}</td>
+                                <td><a href="https://${gw.fqdn}" target="_blank">${gw.fqdn}</a></td>
+                                <td><span class="score-badge ${gw.responseTime < 300 ? 'score-low' : gw.responseTime < 600 ? 'score-medium' : 'score-high'}">${gw.responseTime}ms</span></td>
+                                <td>${gw.serverHeader || 'N/A'}</td>
+                                <td>${gw.httpVersion || 'N/A'}</td>
+                                <td>${gw.country || 'N/A'}</td>
+                            </tr>
+                        `).join('');
+                    })()}
+                </tbody>
+            </table>
+        </div>
+
         ${process.env.SKIP_GEO ? '' : `
         <div style="background: var(--bg-color); padding: 16px; border-radius: 8px; margin-top: 20px; font-size: 0.875rem; color: var(--text-muted);">
             <strong>Note:</strong> Geographic data may be incomplete due to API rate limits. For best results, run with smaller gateway sets or use SKIP_GEO=true to disable geographic analysis.
@@ -1478,6 +1548,167 @@ export function generateHTMLReport(
         }
         ` : ''}
 
+        // Performance charts
+        let responseTimeChart, serverSoftwareChart, httpVersionChart, certIssuerChart;
+
+        const responseTimeCtx = document.getElementById('responseTimeChart')?.getContext('2d');
+        if (responseTimeCtx) {
+            const responseTimes = ${JSON.stringify(csvData)}
+                .map(gw => gw.responseTime)
+                .filter(rt => rt && rt > 0);
+
+            const fast = responseTimes.filter(rt => rt < 300).length;
+            const medium = responseTimes.filter(rt => rt >= 300 && rt < 600).length;
+            const slow = responseTimes.filter(rt => rt >= 600).length;
+
+            responseTimeChart = new Chart(responseTimeCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Fast (<300ms)', 'Medium (300-600ms)', 'Slow (>600ms)'],
+                    datasets: [{
+                        data: [fast, medium, slow],
+                        backgroundColor: ['#10B981', '#F59E0B', '#EF4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const total = fast + medium + slow;
+                                    const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                    return \`\${context.label}: \${context.parsed} gateways (\${percentage}%)\`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        const serverSoftwareCtx = document.getElementById('serverSoftwareChart')?.getContext('2d');
+        if (serverSoftwareCtx) {
+            const servers = {};
+            ${JSON.stringify(csvData)}.forEach(gw => {
+                if (gw.serverHeader && gw.serverHeader !== 'N/A') {
+                    const server = gw.serverHeader.split('/')[0].toLowerCase();
+                    servers[server] = (servers[server] || 0) + 1;
+                }
+            });
+
+            const sortedServers = Object.entries(servers)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+
+            serverSoftwareChart = new Chart(serverSoftwareCtx, {
+                type: 'bar',
+                data: {
+                    labels: sortedServers.map(s => s[0]),
+                    datasets: [{
+                        label: 'Gateway Count',
+                        data: sortedServers.map(s => s[1]),
+                        backgroundColor: '#8B5CF6',
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        const httpVersionCtx = document.getElementById('httpVersionChart')?.getContext('2d');
+        if (httpVersionCtx) {
+            const versions = {};
+            ${JSON.stringify(csvData)}.forEach(gw => {
+                if (gw.httpVersion && gw.httpVersion !== 'N/A') {
+                    versions[gw.httpVersion] = (versions[gw.httpVersion] || 0) + 1;
+                }
+            });
+
+            httpVersionChart = new Chart(httpVersionCtx, {
+                type: 'pie',
+                data: {
+                    labels: Object.keys(versions),
+                    datasets: [{
+                        data: Object.values(versions),
+                        backgroundColor: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom'
+                        }
+                    }
+                }
+            });
+        }
+
+        const certIssuerCtx = document.getElementById('certIssuerChart')?.getContext('2d');
+        if (certIssuerCtx) {
+            const issuers = {};
+            ${JSON.stringify(csvData)}.forEach(gw => {
+                if (gw.certIssuer && gw.certIssuer !== 'N/A') {
+                    issuers[gw.certIssuer] = (issuers[gw.certIssuer] || 0) + 1;
+                }
+            });
+
+            const sortedIssuers = Object.entries(issuers)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+
+            certIssuerChart = new Chart(certIssuerCtx, {
+                type: 'bar',
+                data: {
+                    labels: sortedIssuers.map(i => i[0]),
+                    datasets: [{
+                        label: 'Gateway Count',
+                        data: sortedIssuers.map(i => i[1]),
+                        backgroundColor: '#EC4899',
+                        borderWidth: 0,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    },
+                    scales: {
+                        x: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
         function updateChartTheme() {
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const textColor = isDark ? '#F9FAFB' : '#1F2937';
@@ -1534,6 +1765,45 @@ export function generateHTMLReport(
             if (tldChart && tldChart.options.plugins.legend) {
                 tldChart.options.plugins.legend.labels.color = textColor;
                 tldChart.update();
+            }
+
+            // Update performance charts
+            if (responseTimeChart && responseTimeChart.options.plugins.legend) {
+                responseTimeChart.options.plugins.legend.labels.color = textColor;
+                responseTimeChart.update();
+            }
+
+            if (serverSoftwareChart) {
+                if (serverSoftwareChart.options.scales) {
+                    if (serverSoftwareChart.options.scales.x) {
+                        serverSoftwareChart.options.scales.x.ticks = { ...serverSoftwareChart.options.scales.x.ticks, color: textColor };
+                        serverSoftwareChart.options.scales.x.grid = { ...serverSoftwareChart.options.scales.x.grid, color: gridColor };
+                    }
+                    if (serverSoftwareChart.options.scales.y) {
+                        serverSoftwareChart.options.scales.y.ticks = { ...serverSoftwareChart.options.scales.y.ticks, color: textColor };
+                        serverSoftwareChart.options.scales.y.grid = { ...serverSoftwareChart.options.scales.y.grid, color: gridColor };
+                    }
+                }
+                serverSoftwareChart.update();
+            }
+
+            if (httpVersionChart && httpVersionChart.options.plugins.legend) {
+                httpVersionChart.options.plugins.legend.labels.color = textColor;
+                httpVersionChart.update();
+            }
+
+            if (certIssuerChart) {
+                if (certIssuerChart.options.scales) {
+                    if (certIssuerChart.options.scales.x) {
+                        certIssuerChart.options.scales.x.ticks = { ...certIssuerChart.options.scales.x.ticks, color: textColor };
+                        certIssuerChart.options.scales.x.grid = { ...certIssuerChart.options.scales.x.grid, color: gridColor };
+                    }
+                    if (certIssuerChart.options.scales.y) {
+                        certIssuerChart.options.scales.y.ticks = { ...certIssuerChart.options.scales.y.ticks, color: textColor };
+                        certIssuerChart.options.scales.y.grid = { ...certIssuerChart.options.scales.y.grid, color: gridColor };
+                    }
+                }
+                certIssuerChart.update();
             }
         }
 
