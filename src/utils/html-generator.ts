@@ -15,7 +15,7 @@ export function generateHTMLReport(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR.IO Gateway Centralization Analysis Report</title>
+    <title>AR.IO Network Analysis Report</title>
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/globe.gl"></script>
@@ -69,6 +69,8 @@ export function generateHTMLReport(
             margin-bottom: 30px;
             padding-bottom: 20px;
             border-bottom: 2px solid var(--border-color);
+            flex-wrap: nowrap;
+            gap: 16px;
         }
 
         .header h1 {
@@ -76,6 +78,8 @@ export function generateHTMLReport(
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            margin: 0;
+            white-space: nowrap;
         }
 
         .theme-toggle {
@@ -651,15 +655,14 @@ export function generateHTMLReport(
             }
 
             .header {
-                flex-direction: row;
-                gap: 16px;
-                align-items: center;
+                gap: 12px;
+                margin-bottom: 20px;
+                padding-bottom: 16px;
             }
 
             .header h1 {
-                font-size: 1.5rem;
-                line-height: 1.3;
-                flex: 1;
+                font-size: 1.3rem;
+                line-height: 1.2;
             }
 
             .theme-toggle {
@@ -839,7 +842,7 @@ export function generateHTMLReport(
 <body>
     <div class="container">
         <div class="header">
-            <h1>AR.IO Gateway Centralization Analysis</h1>
+            <h1>AR.IO Network Analysis</h1>
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
         </div>
 
@@ -847,7 +850,7 @@ export function generateHTMLReport(
             <div class="stat-card">
                 <h3>Total Gateways</h3>
                 <div class="value">${summary.totalGateways}</div>
-                <div class="subtitle">of ${summary.totalGatewaysInNetwork} total in network</div>
+                <div class="subtitle">${summary.totalGatewaysInNetwork ? `of ${summary.totalGatewaysInNetwork} total in network` : 'Analyzed gateways'}</div>
             </div>
             <div class="stat-card">
                 <h3>Clustered Gateways</h3>
