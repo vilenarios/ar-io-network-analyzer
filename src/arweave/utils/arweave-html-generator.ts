@@ -264,8 +264,23 @@ export function generateArweaveHTML(
     table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
     th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
     th { background: var(--bg-secondary); font-weight: 600; position: sticky; top: 0; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { background: var(--bg-card); }
+    th .sort-icon { margin-left: 4px; opacity: 0.3; font-size: 0.75rem; }
+    th.sort-asc .sort-icon, th.sort-desc .sort-icon { opacity: 1; }
     tr:hover { background: var(--bg-secondary); }
     .table-container { max-height: 600px; overflow-y: auto; border-radius: 12px; border: 1px solid var(--border); }
+    .fullscreen-btn {
+      position: absolute; top: 12px; right: 12px; z-index: 101;
+      background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary);
+      padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;
+      display: flex; align-items: center; gap: 6px; transition: all 0.2s;
+    }
+    .fullscreen-btn:hover { background: var(--bg-secondary); }
+    #globe-container:fullscreen, #cy:fullscreen { width: 100vw; height: 100vh; border-radius: 0; }
+    #globe-container:fullscreen .globe-controls { top: 20px; }
+    #globe-container:fullscreen .globe-legend { bottom: 20px; }
+    #globe-container:fullscreen .fullscreen-btn, #cy:fullscreen .fullscreen-btn { top: 20px; right: 20px; }
     .score-badge {
       display: inline-block; padding: 2px 8px; border-radius: 4px;
       font-size: 0.8rem; font-weight: 600;
@@ -416,6 +431,7 @@ export function generateArweaveHTML(
             <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div><span>High (&gt;0.7)</span></div>
           </div>
         </div>
+        <button class="fullscreen-btn" onclick="toggleFullscreen('globe-container')">⛶ Fullscreen</button>
       </div>
       <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 12px;">
         Showing ${nodesWithGeo.length} nodes with geographic data.
@@ -447,8 +463,9 @@ export function generateArweaveHTML(
         </label>
         <button onclick="resetView()">Reset View</button>
         <button onclick="runLayout()">Re-layout</button>
+        <button onclick="toggleFullscreen('cy')">⛶ Fullscreen</button>
       </div>
-      <div id="cy"></div>
+      <div id="cy" style="position: relative;"></div>
       <div class="legend">
         <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div> High (&gt;0.7)</div>
         <div class="legend-item"><div class="legend-color" style="background: #f59e0b;"></div> Medium (0.4-0.7)</div>
@@ -581,14 +598,14 @@ export function generateArweaveHTML(
         <table id="allNodesTable">
           <thead>
             <tr>
-              <th>IP</th>
-              <th>Port</th>
-              <th>Status</th>
-              <th>Score</th>
-              <th>Country</th>
-              <th>ISP</th>
-              <th>Degree</th>
-              <th>Cluster</th>
+              <th class="sortable" data-sort="ip" onclick="sortTable('allNodesTable', 0, 'string')">IP <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="port" onclick="sortTable('allNodesTable', 1, 'number')">Port <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="status" onclick="sortTable('allNodesTable', 2, 'string')">Status <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="score" onclick="sortTable('allNodesTable', 3, 'number')">Score <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="country" onclick="sortTable('allNodesTable', 4, 'string')">Country <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="isp" onclick="sortTable('allNodesTable', 5, 'string')">ISP <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="degree" onclick="sortTable('allNodesTable', 6, 'number')">Degree <span class="sort-icon">⇅</span></th>
+              <th class="sortable" data-sort="cluster" onclick="sortTable('allNodesTable', 7, 'string')">Cluster <span class="sort-icon">⇅</span></th>
             </tr>
           </thead>
           <tbody>
@@ -1065,8 +1082,93 @@ export function generateArweaveHTML(
       link.click();
     }
 
-    // Initialize globe on load
-    initGlobe();
+    // Table sorting
+    const sortState = {};
+    function sortTable(tableId, colIndex, type) {
+      const table = document.getElementById(tableId);
+      const tbody = table.querySelector('tbody');
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const headers = table.querySelectorAll('th');
+
+      // Toggle sort direction
+      const key = tableId + '-' + colIndex;
+      sortState[key] = sortState[key] === 'asc' ? 'desc' : 'asc';
+      const direction = sortState[key];
+
+      // Update header classes
+      headers.forEach((h, i) => {
+        h.classList.remove('sort-asc', 'sort-desc');
+        if (i === colIndex) h.classList.add('sort-' + direction);
+      });
+
+      // Sort rows
+      rows.sort((a, b) => {
+        let aVal = a.cells[colIndex].textContent.trim();
+        let bVal = b.cells[colIndex].textContent.trim();
+
+        if (type === 'number') {
+          aVal = parseFloat(aVal) || 0;
+          bVal = parseFloat(bVal) || 0;
+        } else {
+          aVal = aVal.toLowerCase();
+          bVal = bVal.toLowerCase();
+        }
+
+        if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      // Re-append sorted rows
+      rows.forEach(row => tbody.appendChild(row));
+    }
+
+    // Fullscreen toggle
+    function toggleFullscreen(elementId) {
+      const elem = document.getElementById(elementId);
+      if (!document.fullscreenElement) {
+        elem.requestFullscreen().catch(err => {
+          console.warn('Fullscreen not supported:', err);
+        });
+      } else {
+        document.exitFullscreen();
+      }
+    }
+
+    // URL hash navigation
+    function handleHashChange() {
+      const hash = window.location.hash.slice(1);
+      if (hash) {
+        const tab = document.querySelector(\`.tab[onclick*="'\${hash}'"]\`);
+        if (tab) tab.click();
+      }
+    }
+
+    // Override switchTab to update URL hash
+    const originalSwitchTab = switchTab;
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      event.target.classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+
+      // Update URL hash without scrolling
+      history.replaceState(null, null, '#' + tabId);
+
+      if (tabId === 'globe') initGlobe();
+      if (tabId === 'graph') initGraph();
+      if (tabId === 'overview') initCharts();
+    }
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+
+    // Initialize based on hash or default to globe
+    if (window.location.hash) {
+      handleHashChange();
+    } else {
+      initGlobe();
+    }
   </script>
 </body>
 </html>`;

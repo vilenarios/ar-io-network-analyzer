@@ -149,6 +149,47 @@ export function generateHTMLReport(
             margin-top: 4px;
         }
 
+        .stat-card {
+            position: relative;
+        }
+
+        .stat-card .info-icon {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 18px;
+            height: 18px;
+            background: var(--bg-color);
+            border-radius: 50%;
+            cursor: help;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .stat-card .tooltip {
+            display: none;
+            position: absolute;
+            top: 36px;
+            right: 0;
+            width: 250px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            z-index: 100;
+            color: var(--text-muted);
+            line-height: 1.5;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .stat-card:hover .tooltip {
+            display: block;
+        }
+
         .status-breakdown {
             display: flex;
             gap: 12px;
@@ -321,6 +362,56 @@ export function generateHTMLReport(
             padding: 12px;
             text-align: left;
             border-bottom: 1px solid var(--border-color);
+        }
+
+        .data-table th.sortable {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .data-table th.sortable:hover {
+            background: var(--bg-color);
+        }
+
+        .data-table th .sort-icon {
+            margin-left: 4px;
+            opacity: 0.3;
+            font-size: 0.75rem;
+        }
+
+        .data-table th.sort-asc .sort-icon,
+        .data-table th.sort-desc .sort-icon {
+            opacity: 1;
+        }
+
+        .fullscreen-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            z-index: 101;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .fullscreen-btn:hover {
+            background: var(--bg-color);
+        }
+
+        .globe-container:fullscreen,
+        #clusterGraph:fullscreen {
+            width: 100vw !important;
+            height: 100vh !important;
+            border-radius: 0;
+            background: var(--bg-color);
         }
 
         .data-table th {
@@ -859,42 +950,58 @@ export function generateHTMLReport(
                     <h3>In Network</h3>
                     <div class="value">${summary.totalGatewaysInNetwork || summary.totalGateways + summary.totalFailedDns}</div>
                     <div class="subtitle">Above stake threshold</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Total gateways registered on the AR.IO network that meet the minimum stake requirement.</div>
                 </div>
                 <div class="stat-card">
                     <h3>Gateways Analyzed</h3>
                     <div class="value">${summary.totalGateways}</div>
                     <div class="subtitle">${summary.totalFailedDns > 0 ? `${summary.totalFailedDns} failed DNS excluded` : 'All gateways resolved'}</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Gateways successfully resolved via DNS. Failed DNS lookups are excluded from analysis to ensure data accuracy.</div>
                 </div>
                 <div class="stat-card">
                     <h3>Clustered Gateways</h3>
                     <div class="value">${summary.clusteredGateways}</div>
                     <div class="subtitle">${((summary.clusteredGateways / summary.totalGateways) * 100).toFixed(1)}% of total</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Gateways grouped into clusters based on shared domain, IP range, or registration patterns. Higher clustering may indicate centralization.</div>
                 </div>
                 <div class="stat-card">
                     <h3>High-Risk Gateways</h3>
                     <div class="value">${summary.highCentralization}</div>
                     <div class="subtitle">Centralization score > 0.7</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Gateways with centralization score above 0.7, indicating strong patterns of shared infrastructure, domains, or operators.</div>
                 </div>
                 <div class="stat-card">
                     <h3>Detected Clusters</h3>
                     <div class="value">${summary.clusters.length}</div>
                     <div class="subtitle">Unique groups</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Number of unique gateway clusters identified. Each cluster represents gateways that may be controlled by the same operator.</div>
                 </div>
                 ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
                 <div class="stat-card">
                     <h3>Unique Countries</h3>
                     <div class="value">${summary.infrastructureImpact.uniqueCountries}</div>
                     <div class="subtitle">Geographic distribution</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Number of unique countries hosting AR.IO gateways. Higher diversity indicates better geographic decentralization.</div>
                 </div>
                 <div class="stat-card">
                     <h3>Unique ISPs</h3>
                     <div class="value">${summary.infrastructureImpact.uniqueIsps}</div>
                     <div class="subtitle">Service providers</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Number of unique Internet Service Providers. More ISP diversity reduces single points of failure.</div>
                 </div>
                 <div class="stat-card">
                     <h3>Datacenter Hosted</h3>
                     <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
                     <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} of ${summary.totalGateways} gateways</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Percentage of gateways hosted in commercial datacenters vs residential/business ISPs. Some datacenter hosting is normal for reliability.</div>
                 </div>
                 ` : ''}
                 ${summary.economicImpact ? `
@@ -902,6 +1009,8 @@ export function generateHTMLReport(
                     <h3>Epoch Rewards</h3>
                     <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
                     <div class="subtitle">Total this epoch</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Total $ARIO rewards distributed to gateways this epoch. Rewards incentivize gateway operators to maintain uptime and performance.</div>
                 </div>
                 ` : ''}
             </div>
@@ -935,13 +1044,15 @@ export function generateHTMLReport(
                 ` : ''}
             </div>
 
-            <div class="chart-card" style="margin-top: 20px;">
+            <div class="chart-card" style="margin-top: 20px; position: relative;">
                 <h2>Cluster Relationships</h2>
                 <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 16px;">
                     Visual representation of gateway clusters. Each node represents a cluster, sized by gateway count.
                     Click a cluster for details.
                 </p>
-                <div id="clusterGraph" style="height: 400px; background: var(--bg-color); border-radius: 8px;"></div>
+                <div id="clusterGraph" style="height: 400px; background: var(--bg-color); border-radius: 8px; position: relative;">
+                    <button class="fullscreen-btn" onclick="toggleFullscreen('clusterGraph')" style="top: 8px; right: 8px;">⛶ Fullscreen</button>
+                </div>
             </div>
         </div>
 
@@ -960,10 +1071,10 @@ export function generateHTMLReport(
             <table id="summaryTable" class="data-table">
                 <thead>
                     <tr>
-                        <th>Rank</th>
-                        <th>Gateway</th>
-                        <th>Centralization Score</th>
-                        <th>Risk Level</th>
+                        <th class="sortable" onclick="sortTable('summaryTable', 0, 'number')">Rank <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('summaryTable', 1, 'string')">Gateway <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('summaryTable', 2, 'number')">Centralization Score <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('summaryTable', 3, 'string')">Risk Level <span class="sort-icon">⇅</span></th>
                         <th>Suspicion Reasons</th>
                     </tr>
                 </thead>
@@ -1005,8 +1116,9 @@ export function generateHTMLReport(
 
         <div id="globe-content" class="tab-content">
             <h2>Global Gateway Distribution</h2>
-            <div class="globe-container">
+            <div class="globe-container" id="globeContainer" style="position: relative;">
                 <div id="globeViz"></div>
+                <button class="fullscreen-btn" onclick="toggleFullscreen('globeContainer')">⛶ Fullscreen</button>
 
                 <div class="globe-controls">
                     <h3>Controls</h3>
@@ -1269,12 +1381,12 @@ export function generateHTMLReport(
             <table id="detailedTable" class="data-table">
                 <thead>
                     <tr>
-                        <th>Gateway</th>
+                        <th class="sortable" onclick="sortTable('detailedTable', 0, 'string')">Gateway <span class="sort-icon">⇅</span></th>
                         <th>Wallet</th>
-                        <th>Stake</th>
-                        <th>Domain</th>
-                        <th>Pattern</th>
-                        <th>IP Range</th>
+                        <th class="sortable" onclick="sortTable('detailedTable', 2, 'number')">Stake <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('detailedTable', 3, 'string')">Domain <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('detailedTable', 4, 'string')">Pattern <span class="sort-icon">⇅</span></th>
+                        <th class="sortable" onclick="sortTable('detailedTable', 5, 'string')">IP Range <span class="sort-icon">⇅</span></th>
                         <th>Cluster</th>
                         <th>Overall Score</th>
                     </tr>
@@ -2570,6 +2682,9 @@ export function generateHTMLReport(
             event.target.classList.add('active');
             document.getElementById(tabName + '-content').classList.add('active');
 
+            // Update URL hash without scrolling
+            history.replaceState(null, null, '#' + tabName);
+
             // Initialize overview charts when switching to overview tab
             if (tabName === 'overview') {
                 initOverviewCharts();
@@ -2584,6 +2699,76 @@ export function generateHTMLReport(
             if (tabName === 'globe') {
                 setTimeout(() => initGlobe(), 100);
             }
+        }
+
+        // Table sorting
+        const sortState = {};
+        function sortTable(tableId, colIndex, type) {
+            const table = document.getElementById(tableId);
+            const tbody = table.querySelector('tbody');
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            const headers = table.querySelectorAll('th');
+
+            // Toggle sort direction
+            const key = tableId + '-' + colIndex;
+            sortState[key] = sortState[key] === 'asc' ? 'desc' : 'asc';
+            const direction = sortState[key];
+
+            // Update header classes
+            headers.forEach((h, i) => {
+                h.classList.remove('sort-asc', 'sort-desc');
+                if (i === colIndex) h.classList.add('sort-' + direction);
+            });
+
+            // Sort rows
+            rows.sort((a, b) => {
+                let aVal = a.cells[colIndex]?.textContent.trim() || '';
+                let bVal = b.cells[colIndex]?.textContent.trim() || '';
+
+                if (type === 'number') {
+                    aVal = parseFloat(aVal.replace(/[^0-9.-]/g, '')) || 0;
+                    bVal = parseFloat(bVal.replace(/[^0-9.-]/g, '')) || 0;
+                } else {
+                    aVal = aVal.toLowerCase();
+                    bVal = bVal.toLowerCase();
+                }
+
+                if (aVal < bVal) return direction === 'asc' ? -1 : 1;
+                if (aVal > bVal) return direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Re-append sorted rows
+            rows.forEach(row => tbody.appendChild(row));
+        }
+
+        // Fullscreen toggle
+        function toggleFullscreen(elementId) {
+            const elem = document.getElementById(elementId);
+            if (!document.fullscreenElement) {
+                elem.requestFullscreen().catch(err => {
+                    console.warn('Fullscreen not supported:', err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // URL hash navigation
+        function handleHashChange() {
+            const hash = window.location.hash.slice(1);
+            if (hash) {
+                const tab = document.querySelector(\`.tab[onclick*="'\${hash}'"]\`);
+                if (tab) tab.click();
+            }
+        }
+
+        // Listen for hash changes
+        window.addEventListener('hashchange', handleHashChange);
+
+        // Initialize based on hash or default
+        if (window.location.hash) {
+            setTimeout(handleHashChange, 100);
         }
     </script>
 </body>
