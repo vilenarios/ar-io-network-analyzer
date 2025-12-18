@@ -19,6 +19,7 @@ export function generateHTMLReport(
     <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/globe.gl"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
     <style>
         :root {
             --primary-color: #4F46E5;
@@ -841,114 +842,9 @@ export function generateHTMLReport(
             <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
         </div>
 
-        <div class="stats-grid">
-            <div class="stat-card">
-                <h3>In Network</h3>
-                <div class="value">${summary.totalGatewaysInNetwork || summary.totalGateways + summary.totalFailedDns}</div>
-                <div class="subtitle">Above stake threshold</div>
-            </div>
-            <div class="stat-card">
-                <h3>Gateways Analyzed</h3>
-                <div class="value">${summary.totalGateways}</div>
-                <div class="subtitle">${summary.totalFailedDns > 0 ? `${summary.totalFailedDns} failed DNS excluded` : 'All gateways resolved'}</div>
-            </div>
-            <div class="stat-card">
-                <h3>Clustered Gateways</h3>
-                <div class="value">${summary.clusteredGateways}</div>
-                <div class="subtitle">${((summary.clusteredGateways / summary.totalGateways) * 100).toFixed(1)}% of total</div>
-            </div>
-            <div class="stat-card">
-                <h3>High-Risk Gateways</h3>
-                <div class="value">${summary.highCentralization}</div>
-                <div class="subtitle">Centralization score > 0.7</div>
-            </div>
-            <div class="stat-card">
-                <h3>Detected Clusters</h3>
-                <div class="value">${summary.clusters.length}</div>
-                <div class="subtitle">Unique groups</div>
-            </div>
-            ${
-              summary.economicImpact
-                ? `
-            <div class="stat-card">
-                <h3>Epoch Rewards</h3>
-                <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
-                <div class="subtitle">Total this epoch</div>
-            </div>
-            <div class="stat-card">
-                <h3>To Centralized Entities</h3>
-                <div class="value">${Math.round(summary.economicImpact.topCentralizedRewards / 1e6).toLocaleString()} $ARIO</div>
-                <div class="subtitle">${summary.economicImpact.topCentralizedPercentage.toFixed(1)}% of total</div>
-            </div>
-            `
-                : ''
-            }
-            ${
-              summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
-                ? `
-            <div class="stat-card">
-                <h3>Unique TLDs</h3>
-                <div class="value">${(() => {
-                  const tlds = new Set();
-                  csvData.forEach((gw) => {
-                    if (gw.baseDomain) {
-                      const tld = gw.baseDomain.substring(gw.baseDomain.lastIndexOf('.'));
-                      tlds.add(tld);
-                    }
-                  });
-                  return tlds.size;
-                })()}</div>
-                <div class="subtitle">ArNS resilience across TLDs</div>
-            </div>
-            <div class="stat-card">
-                <h3>Avg Response Time</h3>
-                <div class="value">${(() => {
-                  const responseTimes = csvData
-                    .map((gw) => gw.responseTime)
-                    .filter((rt): rt is number => rt !== undefined && rt > 0);
-                  if (responseTimes.length === 0) return 'N/A';
-                  const avg = responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length;
-                  return Math.round(avg) + 'ms';
-                })()}</div>
-                <div class="subtitle">Gateway performance metric</div>
-            </div>
-            <div class="stat-card">
-                <h3>Top Country</h3>
-                <div class="value">${summary.infrastructureImpact.countryDistribution[0]?.country || 'N/A'}</div>
-                <div class="subtitle">${summary.infrastructureImpact.countryDistribution[0]?.count || 0} gateways (${summary.infrastructureImpact.countryDistribution[0]?.percentage.toFixed(1) || '0'}%)</div>
-            </div>
-            <div class="stat-card">
-                <h3>Datacenter Hosted</h3>
-                <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
-                <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} of ${summary.totalGateways} gateways</div>
-            </div>
-            <div class="stat-card">
-                <h3>Top Hosting Provider</h3>
-                <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
-                <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways (${summary.infrastructureImpact.topProviders[0]?.percentage.toFixed(1) || '0'}%)</div>
-            </div>
-            `
-                : ''
-            }
-        </div>
-
-        <div class="charts-grid">
-            <div class="chart-card">
-                <h2>Centralization Distribution</h2>
-                <div style="height: 300px;">
-                    <canvas id="distributionChart"></canvas>
-                </div>
-            </div>
-            <div class="chart-card">
-                <h2>Top Centralized Domains</h2>
-                <div style="height: 300px;">
-                    <canvas id="domainsChart"></canvas>
-                </div>
-            </div>
-        </div>
-
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('summary')">Suspicious Gateways</button>
+            <button class="tab active" onclick="switchTab('overview')">Overview</button>
+            <button class="tab" onclick="switchTab('summary')">Suspicious Gateways</button>
             <button class="tab" onclick="switchTab('globe')">Globe View</button>
             ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? '<button class="tab" onclick="switchTab(\'infrastructure\')">Infrastructure</button>' : ''}
             <button class="tab" onclick="switchTab('performance')">Performance</button>
@@ -957,7 +853,99 @@ export function generateHTMLReport(
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
         </div>
 
-        <div id="summary-content" class="tab-content active">
+        <div id="overview-content" class="tab-content active">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>In Network</h3>
+                    <div class="value">${summary.totalGatewaysInNetwork || summary.totalGateways + summary.totalFailedDns}</div>
+                    <div class="subtitle">Above stake threshold</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Gateways Analyzed</h3>
+                    <div class="value">${summary.totalGateways}</div>
+                    <div class="subtitle">${summary.totalFailedDns > 0 ? `${summary.totalFailedDns} failed DNS excluded` : 'All gateways resolved'}</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Clustered Gateways</h3>
+                    <div class="value">${summary.clusteredGateways}</div>
+                    <div class="subtitle">${((summary.clusteredGateways / summary.totalGateways) * 100).toFixed(1)}% of total</div>
+                </div>
+                <div class="stat-card">
+                    <h3>High-Risk Gateways</h3>
+                    <div class="value">${summary.highCentralization}</div>
+                    <div class="subtitle">Centralization score > 0.7</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Detected Clusters</h3>
+                    <div class="value">${summary.clusters.length}</div>
+                    <div class="subtitle">Unique groups</div>
+                </div>
+                ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+                <div class="stat-card">
+                    <h3>Unique Countries</h3>
+                    <div class="value">${summary.infrastructureImpact.uniqueCountries}</div>
+                    <div class="subtitle">Geographic distribution</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Unique ISPs</h3>
+                    <div class="value">${summary.infrastructureImpact.uniqueIsps}</div>
+                    <div class="subtitle">Service providers</div>
+                </div>
+                <div class="stat-card">
+                    <h3>Datacenter Hosted</h3>
+                    <div class="value">${summary.infrastructureImpact.datacenterPercentage.toFixed(1)}%</div>
+                    <div class="subtitle">${summary.infrastructureImpact.totalDatacenterHosted} of ${summary.totalGateways} gateways</div>
+                </div>
+                ` : ''}
+                ${summary.economicImpact ? `
+                <div class="stat-card">
+                    <h3>Epoch Rewards</h3>
+                    <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
+                    <div class="subtitle">Total this epoch</div>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h2>Risk Distribution</h2>
+                    <div style="height: 300px;">
+                        <canvas id="overviewRiskChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h2>Top Centralized Domains</h2>
+                    <div style="height: 300px;">
+                        <canvas id="overviewDomainsChart"></canvas>
+                    </div>
+                </div>
+                ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueCountries > 0 ? `
+                <div class="chart-card">
+                    <h2>Geographic Distribution</h2>
+                    <div style="height: 300px;">
+                        <canvas id="overviewGeoChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <h2>Top Hosting Providers</h2>
+                    <div style="height: 300px;">
+                        <canvas id="overviewProvidersChart"></canvas>
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+
+            <div class="chart-card" style="margin-top: 20px;">
+                <h2>Cluster Relationships</h2>
+                <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 16px;">
+                    Visual representation of gateway clusters. Each node represents a cluster, sized by gateway count.
+                    Click a cluster for details.
+                </p>
+                <div id="clusterGraph" style="height: 400px; background: var(--bg-color); border-radius: 8px;"></div>
+            </div>
+        </div>
+
+        <div id="summary-content" class="tab-content">
             <h2>Top 100 Suspicious Gateways</h2>
             <div class="search-box">
                 <input type="text" id="summarySearch" placeholder="Search gateways..." onkeyup="filterSummaryTable()">
@@ -1643,83 +1631,220 @@ export function generateHTMLReport(
             low: '#10B981'
         };
 
-        // Distribution chart
-        const distributionData = {
-            high: ${summary.highCentralization},
-            medium: ${summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length},
-            low: ${summary.totalGateways - summary.highCentralization - summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length}
-        };
+        // Overview charts initialization
+        let overviewRiskChart, overviewDomainsChart, overviewGeoChart, overviewProvidersChart, clusterCy;
 
-        const distributionCtx = document.getElementById('distributionChart').getContext('2d');
-        const distributionChart = new Chart(distributionCtx, {
-            type: 'doughnut',
-            data: {
-                labels: ['High Risk', 'Medium Risk', 'Low Risk'],
-                datasets: [{
-                    data: [distributionData.high, distributionData.medium, distributionData.low],
-                    backgroundColor: [chartColors.high, chartColors.medium, chartColors.low],
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            padding: 20,
-                            font: {
-                                size: 14
-                            }
+        function initOverviewCharts() {
+            const distributionData = {
+                high: ${summary.highCentralization},
+                medium: ${summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length},
+                low: ${summary.totalGateways - summary.highCentralization - summary.topSuspicious.filter((g) => g.score > 0.4 && g.score <= 0.7).length}
+            };
+
+            const overviewRiskCtx = document.getElementById('overviewRiskChart')?.getContext('2d');
+            if (overviewRiskCtx && !overviewRiskChart) {
+                overviewRiskChart = new Chart(overviewRiskCtx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['High Risk', 'Medium Risk', 'Low Risk'],
+                        datasets: [{
+                            data: [distributionData.high, distributionData.medium, distributionData.low],
+                            backgroundColor: [chartColors.high, chartColors.medium, chartColors.low],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom', labels: { padding: 20, font: { size: 14 } } }
                         }
                     }
+                });
+            }
+
+            // Top centralized domains chart
+            const topDomains = {};
+            ${JSON.stringify(csvData)}.forEach(gw => {
+                if (gw.clusterId && gw.clusterId.startsWith('domain-')) {
+                    topDomains[gw.baseDomain] = (topDomains[gw.baseDomain] || 0) + 1;
+                }
+            });
+            const sortedDomains = Object.entries(topDomains).sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+            const overviewDomainsCtx = document.getElementById('overviewDomainsChart')?.getContext('2d');
+            if (overviewDomainsCtx && !overviewDomainsChart) {
+                overviewDomainsChart = new Chart(overviewDomainsCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: sortedDomains.map(d => d[0]),
+                        datasets: [{
+                            label: 'Gateway Count',
+                            data: sortedDomains.map(d => d[1]),
+                            backgroundColor: '#4F46E5',
+                            borderWidth: 0,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: { legend: { display: false } },
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // Geographic distribution chart
+            const geoCtx = document.getElementById('overviewGeoChart')?.getContext('2d');
+            if (geoCtx && !overviewGeoChart) {
+                const countryData = ${JSON.stringify(summary.infrastructureImpact?.countryDistribution?.slice(0, 10) || [])};
+                overviewGeoChart = new Chart(geoCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: countryData.map(c => c.country),
+                        datasets: [{
+                            label: 'Gateways',
+                            data: countryData.map(c => c.count),
+                            backgroundColor: '#10B981',
+                            borderWidth: 0,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: { legend: { display: false } },
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // Top providers chart
+            const providersCtx = document.getElementById('overviewProvidersChart')?.getContext('2d');
+            if (providersCtx && !overviewProvidersChart) {
+                const providerData = ${JSON.stringify(summary.infrastructureImpact?.topProviders?.slice(0, 10) || [])};
+                overviewProvidersChart = new Chart(providersCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: providerData.map(p => p.name.substring(0, 20)),
+                        datasets: [{
+                            label: 'Gateways',
+                            data: providerData.map(p => p.count),
+                            backgroundColor: '#F59E0B',
+                            borderWidth: 0,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: { legend: { display: false } },
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // Initialize cluster graph
+            initClusterGraph();
+        }
+
+        function initClusterGraph() {
+            if (clusterCy) return;
+
+            const clusterData = ${JSON.stringify(summary.clusters.map(c => ({
+              id: c.id,
+              size: c.size,
+              avgScore: c.avgScore,
+              baseDomain: c.baseDomain,
+              pattern: c.pattern
+            })))};
+
+            if (clusterData.length === 0) {
+                document.getElementById('clusterGraph').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No clusters detected - network appears well-distributed.</div>';
+                return;
+            }
+
+            // Create nodes for each cluster
+            const nodes = clusterData.map(c => ({
+                data: {
+                    id: c.id,
+                    label: c.baseDomain,
+                    size: Math.max(30, Math.min(80, 20 + c.size * 3)),
+                    score: c.avgScore,
+                    gatewayCount: c.size,
+                    pattern: c.pattern
+                }
+            }));
+
+            // Create edges between clusters that share characteristics (same pattern or similar domain)
+            const edges = [];
+            for (let i = 0; i < clusterData.length; i++) {
+                for (let j = i + 1; j < clusterData.length; j++) {
+                    const c1 = clusterData[i];
+                    const c2 = clusterData[j];
+                    // Connect clusters with same pattern type
+                    if (c1.pattern === c2.pattern && c1.pattern !== 'unique') {
+                        edges.push({ data: { source: c1.id, target: c2.id } });
+                    }
                 }
             }
-        });
 
-        // Top centralized domains chart - only domains with domain-based clusters
-        const topDomains = {};
-        ${JSON.stringify(csvData)}.forEach(gw => {
-            // Only count gateways that are in domain-based clusters (not ip- or pattern- clusters)
-            if (gw.clusterId && gw.clusterId.startsWith('domain-')) {
-                topDomains[gw.baseDomain] = (topDomains[gw.baseDomain] || 0) + 1;
-            }
-        });
-
-        const sortedDomains = Object.entries(topDomains)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 10);
-
-        const domainsCtx = document.getElementById('domainsChart').getContext('2d');
-        const domainsChart = new Chart(domainsCtx, {
-            type: 'bar',
-            data: {
-                labels: sortedDomains.map(d => d[0]),
-                datasets: [{
-                    label: 'Gateway Count',
-                    data: sortedDomains.map(d => d[1]),
-                    backgroundColor: '#4F46E5',
-                    borderWidth: 0,
-                    borderRadius: 4
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                indexAxis: 'y',
-                plugins: {
-                    legend: {
-                        display: false
+            clusterCy = cytoscape({
+                container: document.getElementById('clusterGraph'),
+                elements: { nodes, edges },
+                style: [
+                    {
+                        selector: 'node',
+                        style: {
+                            'background-color': ele => {
+                                const score = ele.data('score');
+                                if (score > 0.7) return '#EF4444';
+                                if (score > 0.4) return '#F59E0B';
+                                return '#10B981';
+                            },
+                            'width': 'data(size)',
+                            'height': 'data(size)',
+                            'label': 'data(label)',
+                            'font-size': '10px',
+                            'text-valign': 'bottom',
+                            'text-margin-y': 5,
+                            'color': 'var(--text-color)'
+                        }
+                    },
+                    {
+                        selector: 'edge',
+                        style: {
+                            'width': 1,
+                            'line-color': '#6B7280',
+                            'opacity': 0.4,
+                            'curve-style': 'bezier'
+                        }
+                    },
+                    {
+                        selector: 'node:selected',
+                        style: { 'border-width': 3, 'border-color': '#4F46E5' }
                     }
-                },
-                scales: {
-                    x: {
-                        beginAtZero: true
-                    }
+                ],
+                layout: {
+                    name: 'cose',
+                    nodeRepulsion: 8000,
+                    idealEdgeLength: 100,
+                    animate: false
                 }
-            }
-        });
+            });
+
+            clusterCy.on('tap', 'node', evt => {
+                const data = evt.target.data();
+                alert(\`Cluster: \${data.label}\\nGateways: \${data.gatewayCount}\\nAvg Score: \${data.score.toFixed(3)}\\nPattern: \${data.pattern}\`);
+            });
+        }
+
+        // Initialize overview on load
+        initOverviewCharts();
 
         // Infrastructure charts
         let hostingTypeChart, providersChart, tldChart;
@@ -2031,30 +2156,38 @@ export function generateHTMLReport(
             const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
             const textColor = isDark ? '#F9FAFB' : '#1F2937';
             const gridColor = isDark ? '#374151' : '#E5E7EB';
-            
-            // Update distribution chart (doughnut - no scales)
-            if (distributionChart && distributionChart.options.plugins.legend) {
-                distributionChart.options.plugins.legend.labels.color = textColor;
-                distributionChart.update();
-            }
-            
-            // Update domains chart (bar - has scales)
-            if (domainsChart) {
-                if (domainsChart.options.plugins.legend) {
-                    domainsChart.options.plugins.legend.labels.color = textColor;
+
+            // Helper to update bar chart theme
+            function updateBarChart(chart) {
+                if (!chart) return;
+                if (chart.options.plugins?.legend) {
+                    chart.options.plugins.legend.labels.color = textColor;
                 }
-                if (domainsChart.options.scales) {
-                    if (domainsChart.options.scales.x) {
-                        domainsChart.options.scales.x.ticks = { ...domainsChart.options.scales.x.ticks, color: textColor };
-                        domainsChart.options.scales.x.grid = { ...domainsChart.options.scales.x.grid, color: gridColor };
-                    }
-                    if (domainsChart.options.scales.y) {
-                        domainsChart.options.scales.y.ticks = { ...domainsChart.options.scales.y.ticks, color: textColor };
-                        domainsChart.options.scales.y.grid = { ...domainsChart.options.scales.y.grid, color: gridColor };
-                    }
+                if (chart.options.scales?.x) {
+                    chart.options.scales.x.ticks = { ...chart.options.scales.x.ticks, color: textColor };
+                    chart.options.scales.x.grid = { ...chart.options.scales.x.grid, color: gridColor };
                 }
-                domainsChart.update();
+                if (chart.options.scales?.y) {
+                    chart.options.scales.y.ticks = { ...chart.options.scales.y.ticks, color: textColor };
+                    chart.options.scales.y.grid = { ...chart.options.scales.y.grid, color: gridColor };
+                }
+                chart.update();
             }
+
+            // Helper to update doughnut/pie chart theme
+            function updateDoughnutChart(chart) {
+                if (!chart) return;
+                if (chart.options.plugins?.legend) {
+                    chart.options.plugins.legend.labels.color = textColor;
+                }
+                chart.update();
+            }
+
+            // Update overview charts
+            updateDoughnutChart(overviewRiskChart);
+            updateBarChart(overviewDomainsChart);
+            updateBarChart(overviewGeoChart);
+            updateBarChart(overviewProvidersChart);
 
             // Update infrastructure charts
             if (hostingTypeChart && hostingTypeChart.options.plugins.legend) {
@@ -2428,7 +2561,7 @@ export function generateHTMLReport(
             document.getElementById('globeInfo').classList.remove('visible');
         }
 
-        // Original switchTab function - update to initialize globe when switching to it
+        // Original switchTab function - update to initialize globe and overview when switching
         const originalSwitchTab = switchTab;
         function switchTab(tabName) {
             document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
@@ -2436,6 +2569,16 @@ export function generateHTMLReport(
 
             event.target.classList.add('active');
             document.getElementById(tabName + '-content').classList.add('active');
+
+            // Initialize overview charts when switching to overview tab
+            if (tabName === 'overview') {
+                initOverviewCharts();
+            }
+
+            // Initialize infrastructure charts when switching to infrastructure tab
+            if (tabName === 'infrastructure') {
+                initInfrastructureCharts();
+            }
 
             // Initialize globe when switching to globe tab
             if (tabName === 'globe') {

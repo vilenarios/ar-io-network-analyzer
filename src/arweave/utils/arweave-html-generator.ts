@@ -12,7 +12,9 @@ const MAX_NODES_FOR_DISPLAY = 500;
 export function generateArweaveHTML(
   report: ArweaveNetworkReport,
   nodes: ArweaveNodeAnalysis[],
-  graph: PeerGraph
+  graph: PeerGraph,
+  csvFilename?: string,
+  jsonFilename?: string
 ): string {
   const cytoscapeData = graph.toCytoscapeFormat();
 
@@ -210,6 +212,21 @@ export function generateArweaveHTML(
       font-size: 1.2rem;
     }
     .light-theme #globe-container { background: #1a1a2e; }
+    .globe-controls {
+      position: absolute; top: 20px; left: 20px; z-index: 100;
+      background: var(--bg-card); padding: 16px; border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 180px;
+    }
+    .globe-control-item { margin-bottom: 8px; }
+    .globe-control-item label {
+      display: flex; align-items: center; gap: 8px; font-size: 0.85rem;
+      color: var(--text-primary); cursor: pointer;
+    }
+    .globe-legend {
+      position: absolute; bottom: 20px; right: 20px; z-index: 100;
+      background: var(--bg-card); padding: 12px 16px; border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
     #cy {
       width: 100%; height: 600px; background: var(--bg-secondary);
       border-radius: 12px; border: 1px solid var(--border);
@@ -269,6 +286,12 @@ export function generateArweaveHTML(
     }
     .cluster-card h4 { margin-bottom: 8px; }
     .cluster-meta { display: flex; gap: 16px; flex-wrap: wrap; color: var(--text-secondary); font-size: 0.9rem; }
+    .export-btn {
+      padding: 10px 20px; border: none; border-radius: 8px; font-weight: 500;
+      cursor: pointer; transition: all 0.2s; background: var(--accent); color: white;
+    }
+    .export-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+    .export-btn.secondary { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border); }
     .section-desc {
       background: var(--bg-secondary); padding: 16px; border-radius: 8px;
       margin-bottom: 20px; color: var(--text-secondary); font-size: 0.9rem;
@@ -348,13 +371,55 @@ export function generateArweaveHTML(
     <div id="globe" class="tab-content active">
       <div class="section-desc">
         Interactive 3D globe showing node locations. Node size indicates peer count (degree).
-        Color indicates concentration score: <span style="color: #10b981;">green</span> = low,
-        <span style="color: #f59e0b;">yellow</span> = medium,
-        <span style="color: #ef4444;">red</span> = high concentration.
         Click nodes for details. Arcs show peer connections (limited to ${globeArcs.length} for performance).
         ${nodesWithGeo.length === 0 ? '<br/><strong style="color: var(--warning);">Note: No nodes have geographic data. Enable geo lookup or check API connectivity.</strong>' : ''}
       </div>
-      <div id="globe-container" class="loading"></div>
+      <div id="globe-container" class="loading">
+        <div class="globe-controls">
+          <h4 style="margin-bottom: 12px; font-size: 0.9rem;">Controls</h4>
+          <div class="globe-control-item">
+            <label><input type="checkbox" id="globeAutoRotate" checked onchange="toggleGlobeRotate()"> Auto-rotate</label>
+          </div>
+          <div class="globe-control-item">
+            <label><input type="checkbox" id="globeShowArcs" checked onchange="toggleGlobeArcs()"> Show peer arcs</label>
+          </div>
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="font-size: 0.85rem; margin-bottom: 8px; color: var(--text-secondary);">Color by:</div>
+            <div class="globe-control-item">
+              <label><input type="radio" name="globeColorMode" value="concentration" checked onchange="updateGlobeColorMode()"> Concentration</label>
+            </div>
+            <div class="globe-control-item">
+              <label><input type="radio" name="globeColorMode" value="provider" onchange="updateGlobeColorMode()"> Hosting Provider</label>
+            </div>
+            <div class="globe-control-item">
+              <label><input type="radio" name="globeColorMode" value="country" onchange="updateGlobeColorMode()"> Country</label>
+            </div>
+          </div>
+          <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);">
+            <div style="font-size: 0.85rem; margin-bottom: 8px; color: var(--text-secondary);">Filter by risk:</div>
+            <div class="globe-control-item">
+              <label><input type="checkbox" id="globeShowLow" checked onchange="updateGlobeFilters()"> Low risk</label>
+            </div>
+            <div class="globe-control-item">
+              <label><input type="checkbox" id="globeShowMedium" checked onchange="updateGlobeFilters()"> Medium risk</label>
+            </div>
+            <div class="globe-control-item">
+              <label><input type="checkbox" id="globeShowHigh" checked onchange="updateGlobeFilters()"> High risk</label>
+            </div>
+          </div>
+        </div>
+        <div class="globe-legend" id="globeLegend">
+          <h4 style="margin-bottom: 8px; font-size: 0.85rem;" id="globeLegendTitle">Concentration</h4>
+          <div id="globeLegendContent">
+            <div class="legend-item"><div class="legend-color" style="background: #10b981;"></div><span>Low (&lt;0.4)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #f59e0b;"></div><span>Medium (0.4-0.7)</span></div>
+            <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div><span>High (&gt;0.7)</span></div>
+          </div>
+        </div>
+      </div>
+      <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 12px;">
+        Showing ${nodesWithGeo.length} nodes with geographic data.
+      </p>
     </div>
 
     <!-- Peer Graph Tab -->
@@ -551,7 +616,23 @@ export function generateArweaveHTML(
       <h3 id="nodeInfoTitle">Node Details</h3>
       <div id="nodeInfoContent"></div>
     </div>
+
+    ${csvFilename || jsonFilename ? `
+    <div class="export-buttons" style="display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap;">
+      ${csvFilename ? `<button class="export-btn" onclick="downloadFile('${csvFilename}')">📥 Download CSV</button>` : ''}
+      ${jsonFilename ? `<button class="export-btn" onclick="downloadFile('${jsonFilename}')">📥 Download JSON</button>` : ''}
+      <button class="export-btn secondary" onclick="window.print()">🖨️ Print Report</button>
+    </div>
+    ` : ''}
+
+    <div class="timestamp" style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 24px; text-align: center;">
+      Generated: ${report.timestamp}
+    </div>
   </div>
+
+  <footer style="text-align: center; padding: 24px 20px; margin-top: 40px; color: var(--text-secondary); font-size: 0.875rem; border-top: 1px solid var(--border);">
+    Made with ❤️ by <a href="https://github.com/vilenarios/ar-io-network-analyzer" target="_blank" rel="noopener noreferrer" style="color: var(--accent); text-decoration: none;">Vilenarios</a>
+  </footer>
 
   <script>
     // Data
@@ -611,16 +692,41 @@ export function generateArweaveHTML(
     }
 
     // Color scales
-    const colorScale = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6'];
+    const colorScale = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#06b6d4', '#84cc16', '#f43f5e'];
     const countries = [...new Set(graphNodes.map(n => n.data.countryCode).filter(Boolean))];
     const countryColors = {};
     countries.forEach((c, i) => { countryColors[c] = colorScale[i % colorScale.length]; });
+
+    // Provider colors for globe
+    const providerColorMap = {
+      'hetzner': '#FF6B6B', 'amazon': '#FF9F40', 'aws': '#FF9F40',
+      'digitalocean': '#4ECDC4', 'ovh': '#A29BFE', 'vultr': '#74B9FF',
+      'google': '#FD79A8', 'microsoft': '#A8E6CF', 'azure': '#A8E6CF',
+      'linode': '#FFD93D', 'contabo': '#95E1D3'
+    };
+
+    function getProviderColor(isp, hosting) {
+      if (!isp) return '#6b7280';
+      const ispLower = isp.toLowerCase();
+      for (const [key, color] of Object.entries(providerColorMap)) {
+        if (ispLower.includes(key)) return color;
+      }
+      return hosting ? '#95A5A6' : '#2ECC71';
+    }
+
+    function getCountryColor(country) {
+      return countryColors[country] || '#6b7280';
+    }
 
     function getScoreColor(score) {
       if (score > 0.7) return '#ef4444';
       if (score > 0.4) return '#f59e0b';
       return '#10b981';
     }
+
+    // Globe state
+    let globeColorMode = 'concentration';
+    let globeFilters = { low: true, medium: true, high: true };
 
     // Globe initialization
     let globe;
@@ -650,10 +756,10 @@ export function generateArweaveHTML(
           .globeImageUrl('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg')
           .bumpImageUrl('https://unpkg.com/three-globe/example/img/earth-topology.png')
           .backgroundImageUrl('https://unpkg.com/three-globe/example/img/night-sky.png')
-          .pointsData(globeNodes)
+          .pointsData(getFilteredGlobeNodes())
           .pointLat('lat')
           .pointLng('lng')
-          .pointColor(d => getScoreColor(d.score))
+          .pointColor(d => getGlobePointColor(d))
           .pointRadius(d => Math.max(0.5, Math.min(2.5, 0.5 + d.degree * 0.1)))
           .pointAltitude(0.02)
           .pointLabel(d => \`<div style="background: #1e293b; padding: 8px 12px; border-radius: 6px; color: white;">
@@ -703,6 +809,93 @@ export function generateArweaveHTML(
         console.error('Globe initialization error:', error);
         container.classList.remove('loading');
         container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ef4444;">Error initializing globe. See console for details.</div>';
+      }
+    }
+
+    function getGlobePointColor(d) {
+      if (globeColorMode === 'provider') {
+        return getProviderColor(d.isp, false);
+      } else if (globeColorMode === 'country') {
+        return getCountryColor(d.country);
+      }
+      return getScoreColor(d.score);
+    }
+
+    function getFilteredGlobeNodes() {
+      return globeNodes.filter(d => {
+        const risk = d.score > 0.7 ? 'high' : d.score > 0.4 ? 'medium' : 'low';
+        return globeFilters[risk];
+      });
+    }
+
+    function toggleGlobeRotate() {
+      if (!globe) return;
+      globe.controls().autoRotate = document.getElementById('globeAutoRotate').checked;
+    }
+
+    function toggleGlobeArcs() {
+      if (!globe) return;
+      const show = document.getElementById('globeShowArcs').checked;
+      globe.arcsData(show ? globeArcs : []);
+    }
+
+    function updateGlobeColorMode() {
+      globeColorMode = document.querySelector('input[name="globeColorMode"]:checked').value;
+      if (globe) {
+        globe.pointColor(d => getGlobePointColor(d));
+      }
+      updateGlobeLegend();
+    }
+
+    function updateGlobeFilters() {
+      globeFilters.low = document.getElementById('globeShowLow').checked;
+      globeFilters.medium = document.getElementById('globeShowMedium').checked;
+      globeFilters.high = document.getElementById('globeShowHigh').checked;
+      if (globe) {
+        globe.pointsData(getFilteredGlobeNodes());
+      }
+    }
+
+    function updateGlobeLegend() {
+      const title = document.getElementById('globeLegendTitle');
+      const content = document.getElementById('globeLegendContent');
+
+      if (globeColorMode === 'provider') {
+        title.textContent = 'Hosting Provider';
+        const providers = {};
+        globeNodes.forEach(n => {
+          const color = getProviderColor(n.isp, false);
+          const ispLower = (n.isp || '').toLowerCase();
+          let name = 'Other';
+          for (const key of Object.keys(providerColorMap)) {
+            if (ispLower.includes(key)) { name = key.charAt(0).toUpperCase() + key.slice(1); break; }
+          }
+          if (!providers[name]) providers[name] = { color, count: 0 };
+          providers[name].count++;
+        });
+        const sorted = Object.entries(providers).sort((a, b) => b[1].count - a[1].count).slice(0, 6);
+        content.innerHTML = sorted.map(([name, data]) =>
+          \`<div class="legend-item"><div class="legend-color" style="background: \${data.color};"></div><span>\${name} (\${data.count})</span></div>\`
+        ).join('');
+      } else if (globeColorMode === 'country') {
+        title.textContent = 'Country';
+        const countryCounts = {};
+        globeNodes.forEach(n => {
+          if (n.country && n.country !== 'Unknown') {
+            countryCounts[n.country] = (countryCounts[n.country] || 0) + 1;
+          }
+        });
+        const sorted = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        content.innerHTML = sorted.map(([country, count]) =>
+          \`<div class="legend-item"><div class="legend-color" style="background: \${getCountryColor(country)};"></div><span>\${country} (\${count})</span></div>\`
+        ).join('');
+      } else {
+        title.textContent = 'Concentration';
+        content.innerHTML = \`
+          <div class="legend-item"><div class="legend-color" style="background: #10b981;"></div><span>Low (&lt;0.4)</span></div>
+          <div class="legend-item"><div class="legend-color" style="background: #f59e0b;"></div><span>Medium (0.4-0.7)</span></div>
+          <div class="legend-item"><div class="legend-color" style="background: #ef4444;"></div><span>High (&gt;0.7)</span></div>
+        \`;
       }
     }
 
@@ -863,6 +1056,13 @@ export function generateArweaveHTML(
       rows.forEach(row => {
         row.style.display = row.getAttribute('data-search').includes(query) ? '' : 'none';
       });
+    }
+
+    function downloadFile(filename) {
+      const link = document.createElement('a');
+      link.href = filename;
+      link.download = filename;
+      link.click();
     }
 
     // Initialize globe on load

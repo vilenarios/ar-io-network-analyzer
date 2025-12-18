@@ -446,7 +446,9 @@ export class ArweaveNodeAnalyzer {
 
     // Generate HTML
     const htmlFilename = `${this.config.outputDir}/arweave-report-${dateStr}.html`;
-    const htmlContent = generateArweaveHTML(summary, this.results, this.graph);
+    const csvBasename = `arweave-nodes-${dateStr}.csv`;
+    const jsonBasename = `arweave-summary-${dateStr}.json`;
+    const htmlContent = generateArweaveHTML(summary, this.results, this.graph, csvBasename, jsonBasename);
     writeFileSync(htmlFilename, htmlContent);
     console.log(`🌐 Interactive report saved to ${htmlFilename}`);
 
