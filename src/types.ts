@@ -132,6 +132,8 @@ export interface CentralizationReport {
   timestamp: string;
   totalGateways: number;
   totalGatewaysInNetwork: number;
+  totalResolved: number;
+  totalFailedDns: number;
   clusteredGateways: number;
   highCentralization: number;
   clusters: ClusterSummary[];

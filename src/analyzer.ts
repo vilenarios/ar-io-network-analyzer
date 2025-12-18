@@ -425,7 +425,9 @@ export class GatewayCentralizationAnalyzer {
   }
   
   private detectClusters() {
-    const domainGroups = this.groupBy(this.results, r => r.baseDomain);
+    // Only cluster gateways that resolved successfully
+    const resolvedResults = this.results.filter(r => r.ipAddress !== 'resolution_failed');
+    const domainGroups = this.groupBy(resolvedResults, r => r.baseDomain);
     let clusterId = 1;
 
     // Domain-based clusters - but only if they share infrastructure too
@@ -623,9 +625,12 @@ export class GatewayCentralizationAnalyzer {
   }
   
   private calculateGeographicScores() {
+    // Only score gateways that resolved successfully
+    const resolvedResults = this.results.filter(r => r.ipAddress !== 'resolution_failed');
+
     // City-level clustering
     const cityGroups = this.groupBy(
-      this.results.filter(r => r.city),
+      resolvedResults.filter(r => r.city),
       r => `${r.city}-${r.countryCode}`
     );
     
@@ -644,7 +649,7 @@ export class GatewayCentralizationAnalyzer {
     
     // ISP/Hosting provider clustering
     const ispGroups = this.groupBy(
-      this.results.filter(r => r.isp),
+      resolvedResults.filter(r => r.isp),
       r => r.isp!
     );
     
@@ -673,7 +678,7 @@ export class GatewayCentralizationAnalyzer {
     
     // ASN clustering
     const asnGroups = this.groupBy(
-      this.results.filter(r => r.asn),
+      resolvedResults.filter(r => r.asn),
       r => r.asn!
     );
     
@@ -746,14 +751,36 @@ export class GatewayCentralizationAnalyzer {
   }
   
   private calculateFinalScores() {
-    this.results.forEach(gateway => {
+    // Only calculate scores for resolved gateways
+    const resolvedResults = this.results.filter(r => r.ipAddress !== 'resolution_failed');
+
+    // Pre-compute IP range counts for O(1) lookup
+    const ipRangeCounts = new Map<string, number>();
+    for (const g of resolvedResults) {
+      if (g.ipRange !== 'unknown') {
+        ipRangeCounts.set(g.ipRange, (ipRangeCounts.get(g.ipRange) || 0) + 1);
+      }
+    }
+
+    // Pre-compute cluster gateways for O(1) lookup
+    const clusterGatewaysMap = new Map<string, typeof resolvedResults>();
+    for (const g of resolvedResults) {
+      if (g.clusterId) {
+        if (!clusterGatewaysMap.has(g.clusterId)) {
+          clusterGatewaysMap.set(g.clusterId, []);
+        }
+        clusterGatewaysMap.get(g.clusterId)!.push(g);
+      }
+    }
+
+    resolvedResults.forEach(gateway => {
       // Domain centralization
       if (gateway.domainGroupSize > 1) {
         gateway.domainCentralization = Math.min(
           0.3 + (gateway.domainGroupSize - 1) * 0.2,
           1
         );
-        
+
         if (gateway.domainPattern !== 'unique') {
           gateway.domainCentralization = Math.min(
             gateway.domainCentralization + 0.2,
@@ -761,24 +788,20 @@ export class GatewayCentralizationAnalyzer {
           );
         }
       }
-      
-      // Network centralization
-      const sameIpRange = this.results.filter(
-        g => g.ipRange === gateway.ipRange && g.ipRange !== 'unknown'
-      ).length;
-      
+
+      // Network centralization (using pre-computed map)
+      const sameIpRange = ipRangeCounts.get(gateway.ipRange) || 0;
+
       if (sameIpRange > 2) {
         gateway.networkCentralization = Math.min(
           0.2 + (sameIpRange - 2) * 0.1,
           1
         );
       }
-      
+
       // Stake centralization
       if (gateway.clusterId) {
-        const clusterGateways = this.results.filter(
-          g => g.clusterId === gateway.clusterId
-        );
+        const clusterGateways = clusterGatewaysMap.get(gateway.clusterId) || [];
         const allMinStake = clusterGateways.every(g => g.stake <= this.config.minStake);
         if (allMinStake) {
           gateway.stakeCentralization = 0.5;
@@ -786,7 +809,7 @@ export class GatewayCentralizationAnalyzer {
             gateway.suspicionNotes.push('all_minimum_stake');
           }
         }
-        
+
         // Check if most gateways in cluster have very similar stakes
         const stakes = clusterGateways.map(g => g.stake);
         const avgStake = stakes.reduce((a, b) => a + b) / stakes.length;
@@ -798,7 +821,7 @@ export class GatewayCentralizationAnalyzer {
           }
         }
       }
-      
+
       // Overall score (weighted average)
       gateway.overallCentralization = Math.min(
         gateway.domainCentralization * 0.25 +
@@ -843,11 +866,15 @@ export class GatewayCentralizationAnalyzer {
   }
   
   private generateSummary(): CentralizationReport {
+    // Only include resolved gateways in stats for unbiased analysis
+    const resolvedGateways = this.results.filter(g => g.ipAddress !== 'resolution_failed');
+    const failedDnsGateways = this.results.filter(g => g.ipAddress === 'resolution_failed');
+
     const clusters = this.groupBy(
-      this.results.filter(g => g.clusterId),
+      resolvedGateways.filter(g => g.clusterId),
       g => g.clusterId
     );
-    
+
     const clusterSummaries: ClusterSummary[] = Array.from(clusters.entries()).map(([id, gateways]) => ({
       id,
       size: gateways.length,
@@ -857,28 +884,33 @@ export class GatewayCentralizationAnalyzer {
       gateways: gateways.map(g => g.fqdn),
       wallets: gateways.map(g => g.wallet)
     }));
-    
+
     // Calculate economic impact if distribution data is available
     let economicImpact = undefined;
     if (this.distributionData && this.distributionData.rewards) {
       economicImpact = this.calculateEconomicImpact(clusterSummaries);
     }
 
-    // Calculate infrastructure impact
-    const infrastructureImpact = this.calculateInfrastructureImpact();
+    // Calculate infrastructure impact (only resolved gateways)
+    const infrastructureImpact = this.calculateInfrastructureImpact(resolvedGateways);
 
     return {
       timestamp: new Date().toISOString(),
-      totalGateways: this.results.length,
+      totalGateways: resolvedGateways.length,
       totalGatewaysInNetwork: this.totalGatewaysInNetwork,
-      clusteredGateways: this.results.filter(g => g.clusterId).length,
-      highCentralization: this.results.filter(g => g.overallCentralization > 0.7).length,
+      totalResolved: resolvedGateways.length,
+      totalFailedDns: failedDnsGateways.length,
+      clusteredGateways: resolvedGateways.filter(g => g.clusterId).length,
+      highCentralization: resolvedGateways.filter(g => g.overallCentralization > 0.7).length,
       clusters: clusterSummaries.sort((a, b) => b.avgScore - a.avgScore),
-      topSuspicious: this.results.slice(0, 100).map(g => ({
-        fqdn: g.fqdn,
-        score: g.overallCentralization,
-        reasons: g.suspicionNotes
-      })),
+      topSuspicious: resolvedGateways
+        .sort((a, b) => b.overallCentralization - a.overallCentralization)
+        .slice(0, 100)
+        .map(g => ({
+          fqdn: g.fqdn,
+          score: g.overallCentralization,
+          reasons: g.suspicionNotes
+        })),
       economicImpact,
       infrastructureImpact
     };
@@ -938,51 +970,53 @@ export class GatewayCentralizationAnalyzer {
     };
   }
 
-  private calculateInfrastructureImpact(): InfrastructureImpact {
+  private calculateInfrastructureImpact(gateways: GatewayAnalysis[]): InfrastructureImpact {
     // Count datacenter-hosted gateways
-    const datacenterGateways = this.results.filter(g => g.hosting === true);
+    const datacenterGateways = gateways.filter(g => g.hosting === true);
     const totalDatacenterHosted = datacenterGateways.length;
-    const datacenterPercentage = (totalDatacenterHosted / this.results.length) * 100;
+    const datacenterPercentage = gateways.length > 0
+      ? (totalDatacenterHosted / gateways.length) * 100
+      : 0;
 
     // Group by ISP/hosting provider
     const ispGroups = this.groupBy(
-      this.results.filter(g => g.isp),
+      gateways.filter(g => g.isp),
       g => g.isp!
     );
 
     // Calculate top providers
     const topProviders = Array.from(ispGroups.entries())
-      .map(([name, gateways]) => ({
+      .map(([name, gwList]) => ({
         name,
-        count: gateways.length,
-        percentage: (gateways.length / this.results.length) * 100,
-        gateways: gateways.map(g => g.fqdn)
+        count: gwList.length,
+        percentage: gateways.length > 0 ? (gwList.length / gateways.length) * 100 : 0,
+        gateways: gwList.map(g => g.fqdn)
       }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10); // Top 10 providers
 
     // Group by country
     const countryGroups = this.groupBy(
-      this.results.filter(g => g.country),
+      gateways.filter(g => g.country),
       g => g.country!
     );
 
     // Calculate country distribution
     const countryDistribution = Array.from(countryGroups.entries())
-      .map(([country, gateways]) => {
-        const countryCode = gateways[0].countryCode || '';
+      .map(([country, gwList]) => {
+        const countryCode = gwList[0].countryCode || '';
         return {
           country,
           countryCode,
-          count: gateways.length,
-          percentage: (gateways.length / this.results.length) * 100
+          count: gwList.length,
+          percentage: gateways.length > 0 ? (gwList.length / gateways.length) * 100 : 0
         };
       })
       .sort((a, b) => b.count - a.count);
 
     const uniqueIsps = ispGroups.size;
     const uniqueCountries = countryGroups.size;
-    const uniqueAsns = new Set(this.results.map(g => g.asn).filter(Boolean)).size;
+    const uniqueAsns = new Set(gateways.map(g => g.asn).filter(Boolean)).size;
 
     return {
       totalDatacenterHosted,

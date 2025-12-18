@@ -843,9 +843,14 @@ export function generateHTMLReport(
 
         <div class="stats-grid">
             <div class="stat-card">
-                <h3>Total Gateways</h3>
+                <h3>In Network</h3>
+                <div class="value">${summary.totalGatewaysInNetwork || summary.totalGateways + summary.totalFailedDns}</div>
+                <div class="subtitle">Above stake threshold</div>
+            </div>
+            <div class="stat-card">
+                <h3>Gateways Analyzed</h3>
                 <div class="value">${summary.totalGateways}</div>
-                <div class="subtitle">${summary.totalGatewaysInNetwork ? `of ${summary.totalGatewaysInNetwork} total in network` : 'Analyzed gateways'}</div>
+                <div class="subtitle">${summary.totalFailedDns > 0 ? `${summary.totalFailedDns} failed DNS excluded` : 'All gateways resolved'}</div>
             </div>
             <div class="stat-card">
                 <h3>Clustered Gateways</h3>
