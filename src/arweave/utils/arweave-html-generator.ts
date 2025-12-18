@@ -177,6 +177,16 @@ export function generateArweaveHTML(
       color: var(--text-secondary); line-height: 1.5;
     }
     .stat-card:hover .tooltip { display: block; }
+    .toggle-group {
+      display: flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border);
+    }
+    .toggle-btn {
+      padding: 6px 12px; border: none; background: var(--bg-secondary); color: var(--text-secondary);
+      cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
+    }
+    .toggle-btn:not(:last-child) { border-right: 1px solid var(--border); }
+    .toggle-btn.active { background: var(--accent); color: white; }
+    .toggle-btn:hover:not(.active) { background: var(--bg-card); }
     .tabs {
       display: flex; gap: 4px; border-bottom: 1px solid var(--border);
       margin-bottom: 20px; overflow-x: auto;
@@ -412,22 +422,33 @@ export function generateArweaveHTML(
         Infrastructure distribution analysis. Higher datacenter concentration may indicate centralization concerns,
         though datacenters also provide reliability. Diversity across ISPs and countries improves network resilience.
       </div>
-      <div class="stats-grid">
+      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+        <span style="font-size: 0.9rem; color: var(--text-secondary);">Calculate percentages against:</span>
+        <div class="toggle-group">
+          <button class="toggle-btn active" onclick="setInfraView('responsive')" id="infraToggleResponsive">
+            Responsive Only (${report.infrastructureImpact.totalNodesResponsive || report.totalNodesResponsive})
+          </button>
+          <button class="toggle-btn" onclick="setInfraView('all')" id="infraToggleAll">
+            All Discovered (${report.infrastructureImpact.totalNodesDiscovered || report.totalNodesDiscovered})
+          </button>
+        </div>
+      </div>
+      <div class="stats-grid" id="infraStats">
         <div class="stat-card">
           <div class="label">Datacenter Hosted</div>
-          <div class="value">${report.infrastructureImpact.totalDatacenterHosted} (${report.infrastructureImpact.datacenterPercentage.toFixed(1)}%)</div>
+          <div class="value" id="infraDatacenter">${report.infrastructureImpact.totalDatacenterHosted} (${report.infrastructureImpact.datacenterPercentage.toFixed(1)}%)</div>
         </div>
         <div class="stat-card">
           <div class="label">Unique ISPs</div>
-          <div class="value">${report.infrastructureImpact.uniqueIsps}</div>
+          <div class="value" id="infraIsps">${report.infrastructureImpact.uniqueIsps}</div>
         </div>
         <div class="stat-card">
           <div class="label">Unique Countries</div>
-          <div class="value">${report.infrastructureImpact.uniqueCountries}</div>
+          <div class="value" id="infraCountries">${report.infrastructureImpact.uniqueCountries}</div>
         </div>
         <div class="stat-card">
           <div class="label">Unique ASNs</div>
-          <div class="value">${report.infrastructureImpact.uniqueAsns}</div>
+          <div class="value" id="infraAsns">${report.infrastructureImpact.uniqueAsns}</div>
         </div>
       </div>
       <div class="charts-grid">
@@ -436,7 +457,7 @@ export function generateArweaveHTML(
           <div class="table-container" style="max-height: 400px;">
             <table>
               <thead><tr><th>Provider</th><th>Nodes</th><th>%</th></tr></thead>
-              <tbody>
+              <tbody id="infraProvidersTable">
                 ${report.infrastructureImpact.topProviders
                   .map(p => `<tr><td>${escapeHtml(p.name)}</td><td>${p.count}</td><td>${p.percentage.toFixed(1)}%</td></tr>`)
                   .join('')}
@@ -449,7 +470,7 @@ export function generateArweaveHTML(
           <div class="table-container" style="max-height: 400px;">
             <table>
               <thead><tr><th>IP Range (/24)</th><th>Nodes</th><th>%</th></tr></thead>
-              <tbody>
+              <tbody id="infraIpRangeTable">
                 ${report.infrastructureImpact.ipRangeConcentration
                   .map(r => `<tr><td>${escapeHtml(r.range)}</td><td>${r.count}</td><td>${r.percentage.toFixed(1)}%</td></tr>`)
                   .join('')}
@@ -538,6 +559,56 @@ export function generateArweaveHTML(
     const globeArcs = ${JSON.stringify(globeArcs)};
     const graphNodes = ${JSON.stringify(enhancedNodes)};
     const graphEdges = ${JSON.stringify(displayEdges)};
+
+    // Infrastructure data for toggle
+    const infraDataResponsive = {
+      totalDatacenterHosted: ${report.infrastructureImpact.totalDatacenterHosted},
+      datacenterPercentage: ${report.infrastructureImpact.datacenterPercentage.toFixed(1)},
+      uniqueIsps: ${report.infrastructureImpact.uniqueIsps},
+      uniqueCountries: ${report.infrastructureImpact.uniqueCountries},
+      uniqueAsns: ${report.infrastructureImpact.uniqueAsns},
+      topProviders: ${JSON.stringify(report.infrastructureImpact.topProviders)},
+      ipRangeConcentration: ${JSON.stringify(report.infrastructureImpact.ipRangeConcentration)}
+    };
+    const infraDataAll = ${report.infrastructureImpact.allNodes ? `{
+      totalDatacenterHosted: ${report.infrastructureImpact.allNodes.totalDatacenterHosted},
+      datacenterPercentage: ${report.infrastructureImpact.allNodes.datacenterPercentage.toFixed(1)},
+      uniqueIsps: ${report.infrastructureImpact.allNodes.uniqueIsps},
+      uniqueCountries: ${report.infrastructureImpact.allNodes.uniqueCountries},
+      uniqueAsns: ${report.infrastructureImpact.allNodes.uniqueAsns},
+      topProviders: ${JSON.stringify(report.infrastructureImpact.allNodes.topProviders)},
+      ipRangeConcentration: ${JSON.stringify(report.infrastructureImpact.allNodes.ipRangeConcentration)}
+    }` : 'infraDataResponsive'};
+
+    function setInfraView(mode) {
+      const data = mode === 'responsive' ? infraDataResponsive : infraDataAll;
+
+      // Update toggle buttons
+      document.getElementById('infraToggleResponsive').classList.toggle('active', mode === 'responsive');
+      document.getElementById('infraToggleAll').classList.toggle('active', mode === 'all');
+
+      // Update stat cards
+      document.getElementById('infraDatacenter').textContent = data.totalDatacenterHosted + ' (' + data.datacenterPercentage + '%)';
+      document.getElementById('infraIsps').textContent = data.uniqueIsps;
+      document.getElementById('infraCountries').textContent = data.uniqueCountries;
+      document.getElementById('infraAsns').textContent = data.uniqueAsns;
+
+      // Update providers table
+      document.getElementById('infraProvidersTable').innerHTML = data.topProviders
+        .map(p => '<tr><td>' + escapeHtmlJs(p.name) + '</td><td>' + p.count + '</td><td>' + p.percentage.toFixed(1) + '%</td></tr>')
+        .join('');
+
+      // Update IP range table
+      document.getElementById('infraIpRangeTable').innerHTML = data.ipRangeConcentration
+        .map(r => '<tr><td>' + escapeHtmlJs(r.range) + '</td><td>' + r.count + '</td><td>' + r.percentage.toFixed(1) + '%</td></tr>')
+        .join('');
+    }
+
+    function escapeHtmlJs(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
 
     // Color scales
     const colorScale = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6'];

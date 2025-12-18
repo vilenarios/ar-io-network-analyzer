@@ -167,6 +167,7 @@ export interface SuspiciousNode {
 }
 
 export interface InfrastructureImpact {
+  // Stats calculated against responsive nodes only
   totalDatacenterHosted: number;
   datacenterPercentage: number;
   topProviders: ProviderInfo[];
@@ -175,6 +176,20 @@ export interface InfrastructureImpact {
   uniqueIsps: number;
   uniqueCountries: number;
   uniqueAsns: number;
+
+  // Stats calculated against all discovered nodes (for toggle)
+  allNodes?: {
+    totalDatacenterHosted: number;
+    datacenterPercentage: number;
+    topProviders: ProviderInfo[];
+    countryDistribution: CountryInfo[];
+    ipRangeConcentration: IpRangeInfo[];
+    uniqueIsps: number;
+    uniqueCountries: number;
+    uniqueAsns: number;
+  };
+  totalNodesDiscovered?: number;
+  totalNodesResponsive?: number;
 }
 
 export interface ProviderInfo {

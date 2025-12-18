@@ -554,63 +554,81 @@ export class ArweaveNodeAnalyzer {
   }
 
   private calculateInfrastructureImpact(): InfrastructureImpact {
-    const datacenterNodes = this.results.filter((n) => n.hosting === true);
-    const totalNodes = this.results.length;
+    // Separate responsive and all nodes
+    const responsiveNodes = this.results.filter((n) => n.isResponsive);
+    const allNodes = this.results;
 
-    // ISP distribution
-    const ispGroups = this.groupBy(
-      this.results.filter((n) => n.isp),
-      (n) => n.isp!
-    );
-    const topProviders = Array.from(ispGroups.entries())
-      .map(([name, nodes]) => ({
-        name,
-        count: nodes.length,
-        percentage: (nodes.length / totalNodes) * 100,
-        nodes: nodes.map((n) => n.address),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+    // Helper to calculate stats for a given node set
+    const calculateStats = (nodes: typeof this.results, totalCount: number) => {
+      const datacenterNodes = nodes.filter((n) => n.hosting === true);
 
-    // Country distribution
-    const countryGroups = this.groupBy(
-      this.results.filter((n) => n.country),
-      (n) => n.country!
-    );
-    const countryDistribution = Array.from(countryGroups.entries())
-      .map(([country, nodes]) => ({
-        country,
-        countryCode: nodes[0].countryCode || '',
-        count: nodes.length,
-        percentage: (nodes.length / totalNodes) * 100,
-      }))
-      .sort((a, b) => b.count - a.count);
+      // ISP distribution
+      const ispGroups = this.groupBy(
+        nodes.filter((n) => n.isp),
+        (n) => n.isp!
+      );
+      const topProviders = Array.from(ispGroups.entries())
+        .map(([name, nodeList]) => ({
+          name,
+          count: nodeList.length,
+          percentage: totalCount > 0 ? (nodeList.length / totalCount) * 100 : 0,
+          nodes: nodeList.map((n) => n.address),
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
 
-    // IP range concentration
-    const ip24Groups = this.groupBy(
-      this.results.filter((n) => n.ipRange24 !== 'unknown'),
-      (n) => n.ipRange24
-    );
-    const ipRangeConcentration = Array.from(ip24Groups.entries())
-      .filter(([_, nodes]) => nodes.length >= 3)
-      .map(([range, nodes]) => ({
-        range,
-        count: nodes.length,
-        percentage: (nodes.length / totalNodes) * 100,
-        nodes: nodes.map((n) => n.address),
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 20);
+      // Country distribution
+      const countryGroups = this.groupBy(
+        nodes.filter((n) => n.country),
+        (n) => n.country!
+      );
+      const countryDistribution = Array.from(countryGroups.entries())
+        .map(([country, nodeList]) => ({
+          country,
+          countryCode: nodeList[0].countryCode || '',
+          count: nodeList.length,
+          percentage: totalCount > 0 ? (nodeList.length / totalCount) * 100 : 0,
+        }))
+        .sort((a, b) => b.count - a.count);
+
+      // IP range concentration
+      const ip24Groups = this.groupBy(
+        nodes.filter((n) => n.ipRange24 !== 'unknown'),
+        (n) => n.ipRange24
+      );
+      const ipRangeConcentration = Array.from(ip24Groups.entries())
+        .filter(([_, nodeList]) => nodeList.length >= 3)
+        .map(([range, nodeList]) => ({
+          range,
+          count: nodeList.length,
+          percentage: totalCount > 0 ? (nodeList.length / totalCount) * 100 : 0,
+          nodes: nodeList.map((n) => n.address),
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20);
+
+      return {
+        totalDatacenterHosted: datacenterNodes.length,
+        datacenterPercentage: totalCount > 0 ? (datacenterNodes.length / totalCount) * 100 : 0,
+        topProviders,
+        countryDistribution,
+        ipRangeConcentration,
+        uniqueIsps: ispGroups.size,
+        uniqueCountries: countryGroups.size,
+        uniqueAsns: new Set(nodes.map((n) => n.asn).filter(Boolean)).size,
+      };
+    };
+
+    // Calculate stats for responsive nodes (primary view)
+    const responsiveStats = calculateStats(responsiveNodes, responsiveNodes.length);
+    // Calculate stats for all nodes (toggle view)
+    const allNodesStats = calculateStats(allNodes, allNodes.length);
 
     return {
-      totalDatacenterHosted: datacenterNodes.length,
-      datacenterPercentage: (datacenterNodes.length / totalNodes) * 100,
-      topProviders,
-      countryDistribution,
-      ipRangeConcentration,
-      uniqueIsps: ispGroups.size,
-      uniqueCountries: countryGroups.size,
-      uniqueAsns: new Set(this.results.map((n) => n.asn).filter(Boolean)).size,
+      ...responsiveStats,
+      allNodes: allNodesStats,
+      totalNodesDiscovered: allNodes.length,
+      totalNodesResponsive: responsiveNodes.length,
     };
   }
 

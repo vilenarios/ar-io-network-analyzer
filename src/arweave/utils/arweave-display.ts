@@ -58,7 +58,7 @@ export function printArweaveSummary(report: ArweaveNetworkReport): void {
   console.log(`  Clustered Nodes:           ${report.clusteredNodes}`);
 
   // Infrastructure
-  console.log('\n🏢 INFRASTRUCTURE DISTRIBUTION');
+  console.log('\n🏢 INFRASTRUCTURE DISTRIBUTION (Responsive Nodes Only)');
   console.log('─'.repeat(40));
   console.log(
     `  Datacenter Hosted:         ${report.infrastructureImpact.totalDatacenterHosted} (${report.infrastructureImpact.datacenterPercentage.toFixed(1)}%)`
