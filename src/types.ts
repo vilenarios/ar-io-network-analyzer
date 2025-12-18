@@ -125,6 +125,7 @@ export interface InfrastructureImpact {
   }>;
   uniqueIsps: number;
   uniqueCountries: number;
+  uniqueAsns: number;
 }
 
 export interface CentralizationReport {
@@ -172,6 +173,8 @@ export interface AnalyzerConfig {
   analyzePerformance: boolean;
   useDemoData: boolean;
   minStake: number;
+  dnsConcurrency?: number;         // Parallel DNS resolution limit (default: 50)
+  fingerprintConcurrency?: number; // Parallel fingerprint fetch limit (default: 20)
   aoConfig?: {
     CU_URL?: string;
     MU_URL?: string;

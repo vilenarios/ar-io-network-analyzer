@@ -234,6 +234,115 @@ export async function rateLimitDelay(ms: number = 1400): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Batch geo lookup - up to 100 IPs per request
+ * Much faster than individual lookups due to rate limiting
+ */
+export async function batchGeoLocation(ips: string[]): Promise<Map<string, GeoLocationData>> {
+  const results = new Map<string, GeoLocationData>();
+
+  // Check cache first and filter out already cached IPs
+  const uncachedIps: string[] = [];
+  for (const ip of ips) {
+    if (geoCache.has(ip)) {
+      results.set(ip, geoCache.get(ip)!);
+    } else {
+      uncachedIps.push(ip);
+    }
+  }
+
+  if (uncachedIps.length === 0) {
+    return results;
+  }
+
+  // Process in batches of 100 (ip-api.com limit)
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < uncachedIps.length; i += BATCH_SIZE) {
+    const batch = uncachedIps.slice(i, i + BATCH_SIZE);
+
+    try {
+      const batchResults = await fetchGeoBatch(batch);
+      for (const geoData of batchResults) {
+        if (geoData.status === 'success' && geoData.query) {
+          // Detect if it's a hosting provider
+          const orgLower = (geoData.org || '').toLowerCase();
+          const ispLower = (geoData.isp || '').toLowerCase();
+          const asnameLower = (geoData.asname || '').toLowerCase();
+
+          geoData.hosting = HOSTING_PROVIDERS.some(provider =>
+            orgLower.includes(provider) ||
+            ispLower.includes(provider) ||
+            asnameLower.includes(provider)
+          );
+
+          geoCache.set(geoData.query, geoData);
+          results.set(geoData.query, geoData);
+        }
+      }
+    } catch (error) {
+      console.error(`Batch geo lookup failed for batch starting at ${i}:`, error);
+    }
+
+    // Rate limit between batches (each batch counts as 1 request)
+    if (i + BATCH_SIZE < uncachedIps.length) {
+      await rateLimitDelay(1400);
+    }
+  }
+
+  return results;
+}
+
+async function fetchGeoBatch(ips: string[]): Promise<GeoLocationData[]> {
+  return new Promise((resolve) => {
+    const postData = JSON.stringify(ips.map(ip => ({
+      query: ip,
+      fields: 'status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,query'
+    })));
+
+    const options = {
+      hostname: 'ip-api.com',
+      port: 80,
+      path: '/batch',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      },
+      timeout: 30000
+    };
+
+    const req = http.request(options, (res) => {
+      let data = '';
+
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      res.on('end', () => {
+        try {
+          if (res.statusCode === 200 && data) {
+            const results = JSON.parse(data) as GeoLocationData[];
+            resolve(Array.isArray(results) ? results : []);
+          } else {
+            resolve([]);
+          }
+        } catch {
+          resolve([]);
+        }
+      });
+    });
+
+    req.on('error', () => resolve([]));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve([]);
+    });
+
+    req.write(postData);
+    req.end();
+  });
+}
+
 // Get geographic distance between two coordinates in km
 export function getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth's radius in km

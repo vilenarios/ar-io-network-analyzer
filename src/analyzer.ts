@@ -18,7 +18,7 @@ import { fetchGatewaysFromNetwork, getDemoGateways, fetchDistributions } from '.
 import { generateCSV, generateJSON } from './utils/report-generator.js';
 import { generateHTMLReport } from './utils/html-generator.js';
 import { printSummary } from './utils/display.js';
-import { getGeoLocation, rateLimitDelay } from './utils/geo-location.js';
+import { batchGeoLocation } from './utils/geo-location.js';
 
 export class GatewayCentralizationAnalyzer {
   private config: AnalyzerConfig;
@@ -36,7 +36,9 @@ export class GatewayCentralizationAnalyzer {
     console.log(`  Process ID: ${this.config.processId}`);
     console.log(`  Performance Analysis: ${this.config.analyzePerformance ? 'Enabled' : 'Disabled'}`);
     console.log(`  Geographic Analysis: ${process.env.SKIP_GEO ? 'Disabled' : 'Enabled'}`);
-    console.log(`  Min Stake Threshold: ${this.config.minStake}\n`);
+    console.log(`  Min Stake Threshold: ${this.config.minStake}`);
+    console.log(`  DNS Concurrency: ${this.config.dnsConcurrency || 50}`);
+    console.log(`  Fingerprint Concurrency: ${this.config.fingerprintConcurrency || 20}\n`);
     
     try {
       // 1. Fetch all gateways
@@ -72,59 +74,77 @@ export class GatewayCentralizationAnalyzer {
         }
       }
       
-      // 2. Analyze each gateway
-      console.log('🔬 Performing deep analysis...');
-      let geoLookupFailures = 0;
+      // 2. Parallel DNS resolution
+      console.log('🔍 Resolving DNS for all gateways (parallel)...');
+      const dnsResults = await this.parallelDnsResolve(gateways);
+      console.log(`   Resolved ${dnsResults.filter(r => r.ip !== 'resolution_failed').length}/${gateways.length} gateways`);
+
+      // 3. Batch geo lookups
+      let geoData = new Map<string, any>();
+      if (!this.config.useDemoData && !process.env.SKIP_GEO) {
+        console.log('\n🌍 Looking up geographic data (batch mode)...');
+        const validIps = dnsResults
+          .map(r => r.ip)
+          .filter(ip => ip !== 'resolution_failed');
+        const uniqueIps = [...new Set(validIps)];
+        console.log(`   Fetching geo data for ${uniqueIps.length} unique IPs...`);
+
+        const batchCount = Math.ceil(uniqueIps.length / 100);
+        console.log(`   Processing ${batchCount} batch(es) of up to 100 IPs each...`);
+
+        geoData = await batchGeoLocation(uniqueIps);
+        console.log(`   Retrieved geo data for ${geoData.size} IPs`);
+      }
+
+      // 4. Parallel technical fingerprinting (if enabled)
+      let fingerprintResults = new Map<string, TechnicalFingerprint>();
+      if (this.config.analyzePerformance && !this.config.useDemoData) {
+        console.log('\n🔧 Fetching technical fingerprints (parallel)...');
+        fingerprintResults = await this.parallelFingerprintFetch(gateways);
+        console.log(`   Retrieved fingerprints for ${fingerprintResults.size}/${gateways.length} gateways`);
+      }
+
+      // 5. Combine all data into analysis results
+      console.log('\n🔬 Combining analysis data...');
       for (let i = 0; i < gateways.length; i++) {
         const gateway = gateways[i];
-        process.stdout.write(`\r[${i + 1}/${gateways.length}] Analyzing ${gateway.fqdn}...`);
-        
+        if ((i + 1) % 100 === 0 || i === gateways.length - 1) {
+          process.stdout.write(`\r[${i + 1}/${gateways.length}] Processing gateways...`);
+        }
+
         try {
-          const analysis = await this.analyzeGateway(gateway);
+          const dnsResult = dnsResults[i];
+          const analysis = this.buildAnalysis(gateway, dnsResult, geoData, fingerprintResults);
           this.results.push(analysis);
-          
-          // Track geo lookup failures
-          if (analysis.ipAddress !== 'resolution_failed' && !analysis.country) {
-            geoLookupFailures++;
-          }
         } catch (error) {
           console.error(`\nError analyzing ${gateway.fqdn}:`, error);
-        }
-        
-        // Small delay to avoid overwhelming gateways
-        if (this.config.analyzePerformance && !this.config.useDemoData) {
-          await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
       console.log('\n');
       
-      if (geoLookupFailures > 10) {
-        console.log(`⚠️  Geographic data unavailable for ${geoLookupFailures} gateways (API rate limit or network issues)`);
-      }
-      
-      // 3. Detect clusters and patterns
+      // 6. Detect clusters and patterns
       console.log('🔗 Detecting centralization patterns...');
       this.detectClusters();
-      
-      // 4. Calculate temporal scores
+
+      // 7. Calculate temporal scores
       console.log('⏱️  Analyzing temporal patterns...');
       this.calculateTemporalScores();
-      
-      // 5. Calculate technical similarity
+
+      // 8. Calculate technical similarity
       if (this.config.analyzePerformance) {
         console.log('🔧 Analyzing technical fingerprints...');
         this.calculateTechnicalScores();
       }
-      
-      // 6. Calculate geographic centralization
+
+      // 9. Calculate geographic centralization
       console.log('🌍 Analyzing geographic distribution...');
       this.calculateGeographicScores();
-      
-      // 7. Calculate final scores
+
+      // 10. Calculate final scores
       console.log('📈 Calculating final centralization scores...');
       this.calculateFinalScores();
-      
-      // 7. Generate outputs
+
+      // 11. Generate outputs
       await this.generateReports();
       
     } catch (error) {
@@ -133,63 +153,126 @@ export class GatewayCentralizationAnalyzer {
     }
   }
   
-  private async analyzeGateway(gateway: Gateway): Promise<GatewayAnalysis> {
+  /**
+   * Parallel DNS resolution with concurrency limit
+   */
+  private async parallelDnsResolve(gateways: Gateway[]): Promise<Array<{ fqdn: string; ip: string; ipRange: string }>> {
+    const concurrency = this.config.dnsConcurrency || 50;
+    const results: Array<{ fqdn: string; ip: string; ipRange: string }> = [];
+    let completed = 0;
+
+    // Worker function
+    const resolveDns = async (gateway: Gateway): Promise<{ fqdn: string; ip: string; ipRange: string }> => {
+      try {
+        const addresses = await resolve4(gateway.fqdn);
+        const ip = addresses[0];
+        const ipParts = ip.split('.');
+        const ipRange = `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}.0/24`;
+        return { fqdn: gateway.fqdn, ip, ipRange };
+      } catch {
+        return { fqdn: gateway.fqdn, ip: 'resolution_failed', ipRange: 'unknown' };
+      }
+    };
+
+    // Process in batches with concurrency limit
+    for (let i = 0; i < gateways.length; i += concurrency) {
+      const batch = gateways.slice(i, i + concurrency);
+      const batchResults = await Promise.all(batch.map(resolveDns));
+      results.push(...batchResults);
+      completed += batch.length;
+      process.stdout.write(`\r   [${completed}/${gateways.length}] Resolving DNS...`);
+    }
+    process.stdout.write('\n');
+
+    return results;
+  }
+
+  /**
+   * Parallel technical fingerprint fetching with concurrency limit
+   */
+  private async parallelFingerprintFetch(gateways: Gateway[]): Promise<Map<string, TechnicalFingerprint>> {
+    const concurrency = this.config.fingerprintConcurrency || 20;
+    const results = new Map<string, TechnicalFingerprint>();
+    let completed = 0;
+
+    // Process in batches with concurrency limit
+    for (let i = 0; i < gateways.length; i += concurrency) {
+      const batch = gateways.slice(i, i + concurrency);
+      const batchPromises = batch.map(async (gateway) => {
+        const fingerprint = await this.getTechnicalFingerprint(gateway.fqdn);
+        return { fqdn: gateway.fqdn, fingerprint };
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      for (const { fqdn, fingerprint } of batchResults) {
+        if (fingerprint) {
+          results.set(fqdn, fingerprint);
+          this.technicalFingerprints.set(fqdn, fingerprint);
+        }
+      }
+
+      completed += batch.length;
+      process.stdout.write(`\r   [${completed}/${gateways.length}] Fetching fingerprints...`);
+    }
+    process.stdout.write('\n');
+
+    return results;
+  }
+
+  /**
+   * Build analysis from pre-fetched data
+   */
+  private buildAnalysis(
+    gateway: Gateway,
+    dnsResult: { fqdn: string; ip: string; ipRange: string },
+    geoData: Map<string, any>,
+    fingerprintResults: Map<string, TechnicalFingerprint>
+  ): GatewayAnalysis {
     // Domain analysis
     const domainInfo = this.analyzeDomain(gateway.fqdn);
-    
-    // Network analysis
-    const networkInfo = await this.analyzeNetwork(gateway.fqdn);
-    
-    // Geographic analysis (if we have an IP and geo is enabled)
+
+    // Apply geo data if available
     let geoInfo = {};
-    if (networkInfo.ipAddress && networkInfo.ipAddress !== 'resolution_failed' && 
-        !this.config.useDemoData && !process.env.SKIP_GEO) {
-      const geoData = await getGeoLocation(networkInfo.ipAddress);
-      if (geoData) {
-        geoInfo = {
-          country: geoData.country,
-          countryCode: geoData.countryCode,
-          region: geoData.regionName || geoData.region,
-          city: geoData.city,
-          latitude: geoData.lat,
-          longitude: geoData.lon,
-          timezone: geoData.timezone,
-          isp: geoData.isp,
-          asn: geoData.as,
-          asnOrg: geoData.org,
-          hosting: geoData.hosting,
-        };
-      }
-      // Rate limit to avoid hitting API limits (45 req/min = 1.33s between requests)
-      await rateLimitDelay(1400);
+    const nodeGeo = geoData.get(dnsResult.ip);
+    if (nodeGeo) {
+      geoInfo = {
+        country: nodeGeo.country,
+        countryCode: nodeGeo.countryCode,
+        region: nodeGeo.regionName || nodeGeo.region,
+        city: nodeGeo.city,
+        latitude: nodeGeo.lat,
+        longitude: nodeGeo.lon,
+        timezone: nodeGeo.timezone,
+        isp: nodeGeo.isp,
+        asn: nodeGeo.as,
+        asnOrg: nodeGeo.org,
+        hosting: nodeGeo.hosting,
+      };
     }
-    
-    // Technical fingerprint (if enabled)
+
+    // Apply technical fingerprint if available
     let technicalInfo = {};
-    if (this.config.analyzePerformance && !this.config.useDemoData) {
-      const fingerprint = await this.getTechnicalFingerprint(gateway.fqdn);
-      if (fingerprint) {
-        this.technicalFingerprints.set(gateway.fqdn, fingerprint);
-        technicalInfo = {
-          responseTime: fingerprint.responseTime,
-          serverHeader: fingerprint.serverHeader,
-          httpVersion: fingerprint.httpVersion,
-          supportedCompression: fingerprint.acceptsCompression,
-          certIssuer: fingerprint.certInfo?.issuer,
-          certIssueDate: fingerprint.certInfo?.issued,
-          certExpiryDate: fingerprint.certInfo?.expires,
-        };
-      }
+    const fingerprint = fingerprintResults.get(gateway.fqdn);
+    if (fingerprint) {
+      technicalInfo = {
+        responseTime: fingerprint.responseTime,
+        serverHeader: fingerprint.serverHeader,
+        httpVersion: fingerprint.httpVersion,
+        supportedCompression: fingerprint.acceptsCompression,
+        certIssuer: fingerprint.certInfo?.issuer,
+        certIssueDate: fingerprint.certInfo?.issued,
+        certExpiryDate: fingerprint.certInfo?.expires,
+      };
     }
-    
+
     // Initialize suspicion notes
     const suspicionNotes: string[] = [];
-    
+
     // Check for minimum stake
     if (gateway.stake <= this.config.minStake) {
       suspicionNotes.push('minimum_stake');
     }
-    
+
     return {
       fqdn: gateway.fqdn,
       wallet: gateway.wallet,
@@ -198,12 +281,11 @@ export class GatewayCentralizationAnalyzer {
       registrationTimestamp: gateway.startTimestamp,
 
       ...domainInfo,
-      baseDomain: domainInfo.baseDomain || gateway.fqdn, // Ensure baseDomain is always defined
+      baseDomain: domainInfo.baseDomain || gateway.fqdn,
       domainPattern: domainInfo.domainPattern || 'unknown',
       domainGroupSize: domainInfo.domainGroupSize || 0,
-      ...networkInfo,
-      ipAddress: networkInfo.ipAddress || 'unknown',
-      ipRange: networkInfo.ipRange || 'unknown',
+      ipAddress: dnsResult.ip,
+      ipRange: dnsResult.ipRange,
       ...geoInfo,
       ...technicalInfo,
 
@@ -272,25 +354,6 @@ export class GatewayCentralizationAnalyzer {
     if (/^(east|west|north|south|central)-\d+/.test(subdomain)) return 'direction_number';
     
     return 'unique';
-  }
-  
-  private async analyzeNetwork(fqdn: string): Promise<Partial<GatewayAnalysis>> {
-    try {
-      const addresses = await resolve4(fqdn);
-      const ip = addresses[0];
-      const ipParts = ip.split('.');
-      const ipRange = `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}.0/24`;
-      
-      return {
-        ipAddress: ip,
-        ipRange
-      };
-    } catch (error) {
-      return {
-        ipAddress: 'resolution_failed',
-        ipRange: 'unknown'
-      };
-    }
   }
   
   private async getTechnicalFingerprint(fqdn: string): Promise<TechnicalFingerprint | null> {
@@ -919,6 +982,7 @@ export class GatewayCentralizationAnalyzer {
 
     const uniqueIsps = ispGroups.size;
     const uniqueCountries = countryGroups.size;
+    const uniqueAsns = new Set(this.results.map(g => g.asn).filter(Boolean)).size;
 
     return {
       totalDatacenterHosted,
@@ -926,7 +990,8 @@ export class GatewayCentralizationAnalyzer {
       topProviders,
       countryDistribution,
       uniqueIsps,
-      uniqueCountries
+      uniqueCountries,
+      uniqueAsns
     };
   }
 

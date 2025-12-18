@@ -34,17 +34,20 @@ A sophisticated TypeScript tool for detecting and analyzing potential centraliza
 ## Installation
 
 1. Clone this repository:
+
 ```bash
 git clone https://github.com/vilenarios/ar-io-network-analyzer.git
 cd ar-io-network-analyzer
 ```
 
 2. Install dependencies:
+
 ```bash
 npm install
 ```
 
 3. Build the project:
+
 ```bash
 npm run build
 ```
@@ -68,7 +71,7 @@ npm run analyze:demo
 SKIP_GEO=true npm run analyze
 
 # Use specific AR.IO process ID
-IO_PROCESS_ID=YOUR_PROCESS_ID npm run analyze
+ARIO_PROCESS_ID=YOUR_PROCESS_ID npm run analyze
 
 # Set custom minimum stake threshold
 MIN_STAKE=100000 npm run analyze
@@ -80,6 +83,7 @@ npm run analyze:performance
 ### API Rate Limits
 
 The geographic analysis uses ip-api.com (free tier):
+
 - 45 requests per minute limit
 - Automatic rate limiting (1.4s delay between requests)
 - Use `SKIP_GEO=true` for large gateway sets
@@ -98,6 +102,7 @@ All analysis results are saved to the `reports/` directory:
 ### CSV Report (`gateway-centralization-YYYY-MM-DD.csv`)
 
 Contains detailed analysis for each gateway:
+
 - Basic information (FQDN, wallet, stake, status)
 - Domain analysis (base domain, pattern, group size)
 - Network analysis (IP address, IP range)
@@ -108,6 +113,7 @@ Contains detailed analysis for each gateway:
 ### JSON Summary (`gateway-centralization-summary-YYYY-MM-DD.json`)
 
 Machine-readable summary including:
+
 - Total gateway statistics
 - Cluster information with average scores
 - Top 100 suspicious gateways with reasons
@@ -117,11 +123,12 @@ Machine-readable summary including:
 ### HTML Report (`gateway-centralization-report-YYYY-MM-DD.html`)
 
 Interactive visual report that includes:
+
 - **Dashboard Overview**: Key metrics and statistics at a glance
-- **Interactive Charts**: 
+- **Interactive Charts**:
   - Centralization distribution pie chart
   - Top domains by gateway count
-- **Data Tables**: 
+- **Data Tables**:
   - Summary of top 100 suspicious gateways
   - Full detailed analysis with search and filter
   - Cluster analysis breakdown
@@ -136,30 +143,36 @@ Interactive visual report that includes:
 ## Scoring Methodology
 
 ### Domain Centralization (25%)
+
 - Multiple gateways on same domain increase score
 - Sequential patterns (ar1, ar2, ar3) add bonus penalty
 - Score calculation: `0.3 + (count - 1) * 0.2` (capped at 1.0)
 
 ### Geographic Centralization (25%)
+
 - 5+ gateways in same city: High score
 - 10+ gateways with same ISP: Medium-high score
 - 15+ gateways in same ASN: High score
 - Data center hosting adds additional penalty
 
 ### Network Centralization (15%)
+
 - Gateways in same IP range (/24 subnet) are flagged
 - Score increases with number of gateways in same range
 
 ### Temporal Centralization (15%)
+
 - Gateways registered within 24 hours: High score (0.9)
 - Gateways registered within 1 week: Medium score (0.6)
 - Otherwise: Low score (0.2)
 
 ### Stake Centralization (10%)
+
 - Clusters where all gateways have minimum stake: 0.5 score
 - Similar stake amounts across cluster: 0.3 score
 
 ### Technical Centralization (10%)
+
 - Identical server headers, HTTP versions, TLS configs
 - Similar response times (within 50ms)
 - Same certificate issuers
@@ -167,11 +180,13 @@ Interactive visual report that includes:
 ## Interpreting Results
 
 ### Centralization Score Ranges
+
 - **0.0 - 0.4**: Low centralization (likely legitimate)
 - **0.4 - 0.7**: Medium centralization (worth investigating)
 - **0.7 - 1.0**: High centralization (strong evidence of same actor)
 
 ### Suspicion Notes
+
 - `minimum_stake`: Gateway has minimum stake amount
 - `multiple_per_domain`: Multiple gateways on same domain
 - `sequential_pattern`: Follows numbered pattern (ar1, ar2, etc.)

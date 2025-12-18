@@ -14,10 +14,12 @@
   },
   "scripts": {
     "analyze": "tsx src/index.ts",
-    "analyze:demo": "USE_DEMO_DATA=true tsx src/index.ts",
-    "analyze:performance": "ANALYZE_PERFORMANCE=true tsx src/index.ts",
+    "analyze:demo": "cross-env USE_DEMO_DATA=true tsx src/index.ts",
+    "analyze:fast": "cross-env ANALYZE_PERFORMANCE=false tsx src/index.ts",
+    "analyze:arweave": "tsx src/arweave/arweave-index.ts",
+    "analyze:arweave:demo": "cross-env USE_DEMO_DATA=true tsx src/arweave/arweave-index.ts",
     "build": "tsc",
-    "clean": "rm -rf dist *.csv *.json",
+    "clean": "rimraf dist *.csv *.json",
     "format": "prettier --write \"src/**/*.ts\"",
     "lint": "eslint src --ext .ts"
   },
@@ -37,6 +39,7 @@
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
+    "cross-env": "^7.0.3",
     "eslint": "^8.56.0",
     "prettier": "^3.2.4",
     "tsx": "^4.7.0",

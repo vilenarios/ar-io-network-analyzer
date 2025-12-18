@@ -1131,6 +1131,11 @@ export function generateHTMLReport(
                     <div class="subtitle">Service providers</div>
                 </div>
                 <div class="stat-card">
+                    <h3>Unique ASNs</h3>
+                    <div class="value">${summary.infrastructureImpact.uniqueAsns}</div>
+                    <div class="subtitle">Network diversity</div>
+                </div>
+                <div class="stat-card">
                     <h3>Unique TLDs</h3>
                     <div class="value" id="uniqueTldCount">-</div>
                     <div class="subtitle">Domain diversity</div>
