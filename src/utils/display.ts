@@ -92,6 +92,22 @@ export function printSummary(report: CentralizationReport, includePerformance: b
     }
   }
   
+  // Solana migration progress
+  if (report.migrationStats?.checked) {
+    const m = report.migrationStats;
+    console.log('\n🔗 SOLANA MIGRATION PROGRESS:');
+    console.log(`   By Gateway Count: ${m.migratedCount}/${m.totalGateways} (${m.migratedPercentage.toFixed(1)}%)`);
+    const totalArio = Math.round(m.totalStake / 1e6);
+    const migratedArio = Math.round(m.migratedStake / 1e6);
+    console.log(`   By Staked $ARIO: ${migratedArio.toLocaleString()}/${totalArio.toLocaleString()} (${m.migratedStakePercentage.toFixed(1)}%)`);
+    if (m.unmigratedGateways.length > 0 && m.unmigratedGateways.length <= 10) {
+      console.log(`   Unmigrated (top by stake):`);
+      m.unmigratedGateways.slice(0, 5).forEach((g) => {
+        console.log(`     - ${g.fqdn} (${Math.round(g.stake / 1e6).toLocaleString()} $ARIO)`);
+      });
+    }
+  }
+
   console.log('\n' + '='.repeat(70));
   console.log('📄 Output Files:');
   console.log('  💾 CSV file - Detailed analysis of all gateways');

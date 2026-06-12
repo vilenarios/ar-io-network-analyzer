@@ -1,84 +1,77 @@
-# AR.IO Gateway Centralization Analyzer
+# AR.IO Network Centralization Analyzer
 
-A sophisticated TypeScript tool for detecting and analyzing potential centralization patterns in the AR.IO gateway network. This analyzer helps identify clusters of gateways that may be controlled by the same operators, providing insights into network decentralization and economic impact.
+TypeScript tools for detecting and analyzing centralization patterns in the Arweave ecosystem:
 
-## Features
-
-- **Multi-factor Centralization Detection**:
-  - Domain pattern analysis (sequential numbering, common prefixes)
-  - Geographic clustering (city, ISP, ASN, data center detection)
-  - Network infrastructure clustering (IP ranges, datacenters)
-  - Temporal analysis (registration timing patterns)
-  - Economic behavior (stake levels, delegation patterns)
-  - Technical fingerprinting (server configurations, response patterns)
-
-- **Weighted Scoring System**:
-  - Domain Centralization: 25% weight
-  - Geographic Distribution: 25% weight
-  - Network Similarity: 15% weight
-  - Temporal Patterns: 15% weight
-  - Stake Patterns: 10% weight
-  - Technical Similarity: 10% weight
-
-- **Output Formats**:
-  - Detailed CSV report with all gateway metrics
-  - JSON summary with cluster analysis
-  - Interactive HTML dashboard with visualizations
-  - Console summary with actionable insights
-
-- **Economic Impact Analysis**:
-  - Estimates ARIO token rewards distribution
-  - Calculates rewards going to centralized clusters
-  - Shows percentage of total reward pool at risk
+1. **AR.IO Gateway Analyzer** — Identifies clusters of AR.IO gateways that may be controlled by the same operators using domain, geographic, network, temporal, stake, and technical fingerprint analysis.
+2. **Arweave Node Analyzer** — Crawls the Arweave base layer peer network and analyzes infrastructure distribution, peer graph topology, and geographic concentration.
 
 ## Installation
-
-1. Clone this repository:
 
 ```bash
 git clone https://github.com/vilenarios/ar-io-network-analyzer.git
 cd ar-io-network-analyzer
-```
-
-2. Install dependencies:
-
-```bash
 npm install
 ```
 
-3. Build the project:
+## Requirements
 
-```bash
-npm run build
-```
+- Node.js 18+
+- Network access to AR.IO gateways and/or Arweave nodes
+- (Optional) Internet access for geographic lookups via ip-api.com
 
 ## Usage
 
-### Basic Usage
+### AR.IO Gateway Analyzer
 
 ```bash
 # Run with real network data
 npm run analyze
 
-# Run with demo data (for testing)
+# Run with demo data (no network access needed)
 npm run analyze:demo
+
+# Skip technical fingerprinting (faster)
+npm run analyze:fast
 ```
 
-### Configuration Options
+### Arweave Node Analyzer
 
 ```bash
-# Skip geographic analysis (faster, avoids rate limits)
-SKIP_GEO=true npm run analyze
+# Crawl and analyze Arweave node network
+npm run analyze:arweave
 
-# Use specific AR.IO process ID
-ARIO_PROCESS_ID=YOUR_PROCESS_ID npm run analyze
-
-# Set custom minimum stake threshold
-MIN_STAKE=100000 npm run analyze
-
-# Enable performance analysis (slower but more detailed)
-npm run analyze:performance
+# Run with demo data (no network access needed)
+npm run analyze:arweave:demo
 ```
+
+### Environment Variables
+
+**AR.IO Gateway Analyzer:**
+
+| Variable | Description | Default |
+|---|---|---|
+| `ARIO_PROCESS_ID` | AR.IO process ID | `qNvAoz0TgcH7DMg8BCVn8jF32QH5L6T29VjHxhHqqGE` |
+| `USE_DEMO_DATA` | Use demo data instead of real network (`true`/`false`) | `false` |
+| `SKIP_GEO` | Skip geographic analysis to avoid API rate limits (`true`/`false`) | `false` |
+| `ANALYZE_PERFORMANCE` | Enable performance fingerprinting (`true`/`false`) | `true` |
+| `MIN_STAKE` | Minimum stake threshold | `10000` |
+| `DNS_CONCURRENCY` | Parallel DNS resolution requests | `50` |
+| `FINGERPRINT_CONCURRENCY` | Parallel fingerprinting requests | `20` |
+| `SKIP_MIGRATION_CHECK` | Skip Solana migration lookup via Goldsky (`true`/`false`) | `false` |
+
+**Arweave Node Analyzer:**
+
+| Variable | Description | Default |
+|---|---|---|
+| `USE_DEMO_DATA` | Use demo data instead of crawling (`true`/`false`) | `false` |
+| `MAX_NODES` | Maximum nodes to crawl | `5000` |
+| `CONCURRENCY` | Parallel requests | `30` |
+| `TIMEOUT` | Request timeout in ms | `3000` |
+| `DELAY` | Delay between requests in ms | `20` |
+| `RETRIES` | Retry failed requests | `1` |
+| `SKIP_GEO` | Skip geographic lookups (`true`/`false`) | `false` |
+| `SEED_NODES` | Comma-separated list of seed node addresses | Fetched from `arweave.net` |
+| `OUTPUT_DIR` | Output directory for reports | `reports` |
 
 ### API Rate Limits
 
@@ -86,165 +79,97 @@ The geographic analysis uses ip-api.com (free tier):
 
 - 45 requests per minute limit
 - Automatic rate limiting (1.4s delay between requests)
-- Use `SKIP_GEO=true` for large gateway sets
-
-## Requirements
-
-- Node.js 18+
-- TypeScript 5+
-- Network access to AR.IO gateways
-- (Optional) Internet access for geographic lookups
+- Use `SKIP_GEO=true` for large sets or to avoid rate limits
 
 ## Output Files
 
-All analysis results are saved to the `reports/` directory:
+All analysis results are saved to the `reports/` directory.
 
-### CSV Report (`gateway-centralization-YYYY-MM-DD.csv`)
+### AR.IO Gateway Reports
 
-Contains detailed analysis for each gateway:
+- **CSV** (`gateway-centralization-YYYY-MM-DD.csv`) — Per-gateway detail: FQDN, wallet, stake, domain/network/geographic analysis, centralization scores (0.0–1.0), cluster assignments, and suspicion notes.
+- **JSON** (`gateway-centralization-summary-YYYY-MM-DD.json`) — Machine-readable summary with gateway statistics, cluster info, top suspicious gateways, and economic impact analysis.
+- **HTML** (`gateway-centralization-report-YYYY-MM-DD.html`) — Interactive dashboard with Globe.gl visualization, centralization distribution charts, searchable/filterable data tables, cluster breakdown, and economic impact analysis.
 
-- Basic information (FQDN, wallet, stake, status)
-- Domain analysis (base domain, pattern, group size)
-- Network analysis (IP address, IP range)
-- Performance metrics (response time, server headers)
-- Centralization scores (0.0 to 1.0 for each factor)
-- Cluster assignments and suspicion notes
+### Arweave Node Reports
 
-### JSON Summary (`gateway-centralization-summary-YYYY-MM-DD.json`)
-
-Machine-readable summary including:
-
-- Total gateway statistics
-- Cluster information with average scores
-- Top 100 suspicious gateways with reasons
-- Economic impact analysis
-- Timestamp and metadata
-
-### HTML Report (`gateway-centralization-report-YYYY-MM-DD.html`)
-
-Interactive visual report that includes:
-
-- **Dashboard Overview**: Key metrics and statistics at a glance
-- **Interactive Charts**:
-  - Centralization distribution pie chart
-  - Top domains by gateway count
-- **Data Tables**:
-  - Summary of top 100 suspicious gateways
-  - Full detailed analysis with search and filter
-  - Cluster analysis breakdown
-  - Economic impact analysis
-- **Features**:
-  - Dark/light theme toggle
-  - Search functionality across all data
-  - Filter by risk levels (High/Medium/Low)
-  - Export options for CSV and JSON
-  - Responsive design for mobile viewing
+- **CSV** (`arweave-network-analysis-YYYY-MM-DD.csv`) — Per-node detail: IP, port, version, height, peer count, graph metrics, centralization scores, and cluster assignments.
+- **JSON** (`arweave-network-summary-YYYY-MM-DD.json`) — Network-level summary with infrastructure distribution, geographic concentration, and graph statistics.
+- **HTML** (`arweave-network-report-YYYY-MM-DD.html`) — Interactive report with Cytoscape.js peer graph visualization, infrastructure/geographic distribution charts, and node coloring by risk, community, country, or cluster.
 
 ## Scoring Methodology
 
-### Domain Centralization (25%)
+### AR.IO Gateway Scoring
 
-- Multiple gateways on same domain increase score
-- Sequential patterns (ar1, ar2, ar3) add bonus penalty
-- Score calculation: `0.3 + (count - 1) * 0.2` (capped at 1.0)
+Weighted composite score (0.0–1.0):
 
-### Geographic Centralization (25%)
+| Factor | Weight | What it measures |
+|---|---|---|
+| Domain | 25% | Multiple gateways on same domain, sequential patterns (ar1, ar2, ar3) |
+| Geographic | 25% | City/ISP/ASN clustering, datacenter hosting |
+| Network | 15% | Same /24 IP subnet |
+| Temporal | 15% | Registration timing proximity |
+| Stake | 10% | Minimum stake patterns, similar amounts across cluster |
+| Technical | 10% | Identical server headers, response times, TLS configs |
 
-- 5+ gateways in same city: High score
-- 10+ gateways with same ISP: Medium-high score
-- 15+ gateways in same ASN: High score
-- Data center hosting adds additional penalty
+### Arweave Node Scoring
 
-### Network Centralization (15%)
+| Factor | Weight | What it measures |
+|---|---|---|
+| Geographic | 30% | City/ISP/ASN concentration |
+| Network | 30% | IP range clustering (/24, /16) |
+| Infrastructure | 25% | Cloud provider dominance |
+| Technical | 15% | Version uniformity, response times |
 
-- Gateways in same IP range (/24 subnet) are flagged
-- Score increases with number of gateways in same range
+### Score Interpretation
 
-### Temporal Centralization (15%)
-
-- Gateways registered within 24 hours: High score (0.9)
-- Gateways registered within 1 week: Medium score (0.6)
-- Otherwise: Low score (0.2)
-
-### Stake Centralization (10%)
-
-- Clusters where all gateways have minimum stake: 0.5 score
-- Similar stake amounts across cluster: 0.3 score
-
-### Technical Centralization (10%)
-
-- Identical server headers, HTTP versions, TLS configs
-- Similar response times (within 50ms)
-- Same certificate issuers
-
-## Interpreting Results
-
-### Centralization Score Ranges
-
-- **0.0 - 0.4**: Low centralization (likely legitimate)
-- **0.4 - 0.7**: Medium centralization (worth investigating)
-- **0.7 - 1.0**: High centralization (strong evidence of same actor)
-
-### Suspicion Notes
-
-- `minimum_stake`: Gateway has minimum stake amount
-- `multiple_per_domain`: Multiple gateways on same domain
-- `sequential_pattern`: Follows numbered pattern (ar1, ar2, etc.)
-- `rapid_registration`: Registered close together in time
-- `same_ip_range`: Multiple gateways in same IP subnet
-- `identical_performance`: Very similar response times
-- `all_minimum_stake`: All gateways in cluster have minimum stake
-- `geographic_concentration`: Many gateways in same city
-- `isp_concentration`: Many gateways with same ISP
-- `asn_concentration`: Many gateways in same autonomous system
-- `datacenter_hosting`: Hosted in data center (not residential)
-- `geographic_proximity`: Cluster gateways are geographically close
-- `same_pattern_same_network`: Same naming pattern in same network
-- `close_registration_times`: Registered within a week of each other
-- `similar_stakes`: Very similar stake amounts across cluster
+- **0.0–0.4**: Low centralization (likely legitimate)
+- **0.4–0.7**: Medium centralization (worth investigating)
+- **0.7–1.0**: High centralization (strong evidence of same actor)
 
 ## Architecture
 
 ```
 src/
-├── analyzer.ts         # Main analyzer class
-├── index.ts           # CLI entry point
-├── types.ts           # TypeScript interfaces
+├── index.ts                    # AR.IO analyzer entry point
+├── analyzer.ts                 # Multi-factor centralization analysis
+├── types.ts                    # TypeScript interfaces
 ├── data/
-│   └── gateway-fetcher.ts  # AR.IO SDK integration
+│   └── gateway-fetcher.ts      # AR.IO SDK integration
 ├── utils/
-│   ├── display.ts          # Console output formatting
-│   ├── geo-location.ts     # Geographic lookups
-│   ├── html-generator.ts   # HTML report generation
-│   └── report-generator.ts # CSV/JSON exports
+│   ├── display.ts              # Console output formatting
+│   ├── geo-location.ts         # Geographic lookups (ip-api.com)
+│   ├── html-generator.ts       # HTML report with Globe.gl
+│   └── report-generator.ts     # CSV/JSON exports
+└── arweave/
+    ├── arweave-index.ts        # Arweave analyzer entry point
+    ├── arweave-analyzer.ts     # Infrastructure & centralization analysis
+    ├── arweave-types.ts        # Arweave type definitions
+    ├── node-crawler.ts         # BFS peer network crawler
+    ├── peer-graph.ts           # Graph metrics & community detection
+    └── utils/
+        ├── arweave-display.ts  # Console output formatting
+        └── arweave-html-generator.ts  # HTML report with Cytoscape.js
 ```
 
 ## Development
 
 ```bash
-# Install dependencies
-npm install
+npm run lint       # Run ESLint
+npm run format     # Format code with Prettier
+npm run build      # Compile TypeScript to dist/
+npm run clean      # Remove dist/ and generated CSV/JSON files
+```
 
-# Run analyzer directly with tsx
-npm run analyze
+To regenerate an HTML report from existing CSV/JSON data:
 
-# Run linter
-npm run lint
-
-# Format code
-npm run format
-
-# Build for production
-npm run build
+```bash
+npx tsx regenerate-html.ts 2025-11-13
 ```
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+MIT License — See LICENSE file for details.
 
 ## Acknowledgments
 

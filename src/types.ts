@@ -70,6 +70,8 @@ export interface GatewayAnalysis {
   serverHeader?: string;
   httpVersion?: string;
   supportedCompression?: string[];
+  arIoVersion?: string;
+  arIoRelease?: string;
   
   // Temporal analysis
   registrationTimestamp?: number;
@@ -89,6 +91,12 @@ export interface GatewayAnalysis {
   clusterSize: number;
   clusterRole: 'primary' | 'secondary';
   suspicionNotes: string[];
+
+  // Solana migration status
+  migratedToSolana?: boolean;
+  migrationTxId?: string;
+  solanaPubkey?: string;
+  migrationTimestamp?: number;
 }
 
 export interface TechnicalFingerprint {
@@ -100,6 +108,8 @@ export interface TechnicalFingerprint {
   acceptsCompression: string[];
   responseHeaders: Map<string, string>;
   responseTime: number;
+  arIoVersion?: string;
+  arIoRelease?: string;
   certInfo?: {
     issuer: string;
     issued: Date;
@@ -151,6 +161,28 @@ export interface CentralizationReport {
     topCentralizedPercentage: number;
   };
   infrastructureImpact?: InfrastructureImpact;
+  migrationStats?: MigrationStats;
+  versionStats?: VersionStats;
+}
+
+export interface VersionStats {
+  totalReporting: number;
+  totalGateways: number;
+  topVersion?: string;
+  topVersionCount: number;
+  topVersionPercentage: number;
+  distribution: Array<{ version: string; count: number; percentage: number }>;
+}
+
+export interface MigrationStats {
+  checked: boolean;
+  totalGateways: number;
+  migratedCount: number;
+  migratedPercentage: number;
+  totalStake: number;
+  migratedStake: number;
+  migratedStakePercentage: number;
+  unmigratedGateways: Array<{ fqdn: string; wallet: string; stake: number }>;
 }
 
 export interface ClusterSummary {
@@ -177,6 +209,7 @@ export interface AnalyzerConfig {
   minStake: number;
   dnsConcurrency?: number;         // Parallel DNS resolution limit (default: 50)
   fingerprintConcurrency?: number; // Parallel fingerprint fetch limit (default: 20)
+  skipMigrationCheck?: boolean;    // Skip Solana migration lookup (default: false)
   aoConfig?: {
     CU_URL?: string;
     MU_URL?: string;

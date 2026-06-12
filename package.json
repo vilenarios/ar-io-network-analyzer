@@ -33,7 +33,8 @@
   "author": "Vilenarios",
   "license": "MIT",
   "dependencies": {
-    "@ar.io/sdk": "^3.9.1-alpha.2"
+    "@ar.io/sdk": "4.0.2",
+    "@solana/kit": "^6.8.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

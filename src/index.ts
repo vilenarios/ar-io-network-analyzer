@@ -20,6 +20,11 @@ async function main() {
     minStake: parseInt(process.env.MIN_STAKE || '10000'),
     dnsConcurrency: parseInt(process.env.DNS_CONCURRENCY || '50'),
     fingerprintConcurrency: parseInt(process.env.FINGERPRINT_CONCURRENCY || '20'),
+    // With the Solana SDK, gateway addresses are Solana pubkeys (not Arweave
+    // wallets) — the Goldsky AR-IO-Solana-Registration lookup (keyed on Arweave
+    // owner) would return no matches. Default to skipping; set SKIP_MIGRATION_CHECK=false
+    // to force on for historical/Arweave-keyed datasets.
+    skipMigrationCheck: process.env.SKIP_MIGRATION_CHECK !== 'false',
   });
 
   try {

@@ -4,17 +4,22 @@
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
 
+async function initSolanaArio() {
+  const { ARIO, MAINNET_RPC_URL } = await import('@ar.io/sdk');
+  const { createSolanaRpc } = await import('@solana/kit');
+  const rpcUrl = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL;
+  const rpc = createSolanaRpc(rpcUrl);
+  return { ario: ARIO.init({ rpc }), rpcUrl };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise<{ gateways: Gateway[], totalFetched: number }> {
   try {
-    // Dynamic import for AR.IO SDK
-    const { ARIO } = await import('@ar.io/sdk');
-    
-    // Initialize ARIO for mainnet
-    const ario = ARIO.mainnet();
-    
-    console.log('Fetching all gateways from AR.IO network...');
-    
-    // Fetch all gateways with pagination
+    const { ario, rpcUrl } = await initSolanaArio();
+    console.log(`Fetching all gateways from AR.IO Solana network (rpc: ${rpcUrl})...`);
+    const pageDelayMs = parseInt(process.env.SOLANA_PAGE_DELAY_MS || '500');
+
     const gateways: Gateway[] = [];
     let cursor: string | undefined;
     let hasMore = true;
@@ -25,88 +30,67 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
       pageCount++;
       console.log(`Fetching page ${pageCount}${cursor ? ` (cursor: ${cursor.substring(0, 10)}...)` : ''}`);
 
-      try {
-        const response = await ario.getGateways({
-          cursor,
-          limit: 1000,
-          sortOrder: 'desc',
-          sortBy: 'operatorStake'
-        });
-
-        console.log(`  Fetched ${response.items.length} gateways`);
-        totalFetched += response.items.length;
-        
-        for (const gateway of response.items) {
-          // Only include joined gateways with valid FQDN
-          if (gateway.status === 'joined' && gateway.settings?.fqdn) {
-            gateways.push({
-              fqdn: gateway.settings.fqdn,
-              wallet: gateway.gatewayAddress,
-              stake: gateway.operatorStake || 0,
-              status: gateway.status,
-              startTimestamp: gateway.startTimestamp,
-              endTimestamp: gateway.endTimestamp,
-              settings: gateway.settings,
-              stats: gateway.stats,
-              properties: JSON.stringify({
-                totalDelegatedStake: gateway.totalDelegatedStake,
-                delegates: (gateway as any).delegates ? Object.keys((gateway as any).delegates).length : 0
-              })
-            });
-          }
-        }
-        
-        cursor = response.nextCursor;
-        hasMore = response.hasMore;
-      } catch (pageError) {
-        console.error(`Error fetching page ${pageCount}:`, pageError);
-        // If pagination fails, try to get all at once
-        if (pageCount === 1) {
-          console.log('Attempting to fetch all gateways without pagination...');
-          const allGateways = await ario.getGateways();
-          
-          // Convert from object format to array
-          for (const [address, gateway] of Object.entries(allGateways)) {
-            const gw = gateway as any; // Type assertion for SDK compatibility
-            if (gw.status === 'joined' && gw.settings?.fqdn) {
-              gateways.push({
-                fqdn: gw.settings.fqdn,
-                wallet: address,
-                stake: gw.operatorStake || 0,
-                status: gw.status,
-                startTimestamp: gw.startTimestamp,
-                endTimestamp: gw.endTimestamp,
-                settings: gw.settings,
-                stats: gw.stats,
-                properties: JSON.stringify({
-                  totalDelegatedStake: gw.totalDelegatedStake,
-                  delegates: gw.delegates ? Object.keys(gw.delegates).length : 0
-                })
-              });
-            }
-          }
+      let response;
+      let attempt = 0;
+      while (true) {
+        try {
+          response = await ario.getGateways({
+            cursor,
+            limit: 500,
+            sortOrder: 'desc',
+            sortBy: 'operatorStake'
+          });
           break;
+        } catch (err) {
+          attempt++;
+          if (attempt > 5) throw err;
+          const backoff = Math.min(8000, 1000 * 2 ** attempt);
+          console.log(`  Retry ${attempt}/5 in ${backoff}ms (${(err as Error).message?.slice(0, 80)})`);
+          await sleep(backoff);
         }
-        throw pageError;
       }
+
+      console.log(`  Fetched ${response.items.length} gateways (totalItems=${response.totalItems}, hasMore=${response.hasMore})`);
+      totalFetched += response.items.length;
+
+      for (const gateway of response.items) {
+        if (gateway.status === 'joined' && gateway.settings?.fqdn) {
+          gateways.push({
+            fqdn: gateway.settings.fqdn,
+            wallet: gateway.gatewayAddress,
+            stake: gateway.operatorStake || 0,
+            status: gateway.status,
+            startTimestamp: gateway.startTimestamp,
+            endTimestamp: gateway.endTimestamp,
+            settings: gateway.settings,
+            stats: gateway.stats,
+            properties: JSON.stringify({
+              totalDelegatedStake: gateway.totalDelegatedStake,
+            })
+          });
+        }
+      }
+
+      cursor = response.nextCursor;
+      hasMore = response.hasMore;
+      if (hasMore) await sleep(pageDelayMs);
     }
 
     console.log(`\nTotal gateways in network: ${totalFetched}`);
     console.log(`Joined gateways (analyzed): ${gateways.length}`);
     console.log(`Leaving/other: ${totalFetched - gateways.length}`);
     return { gateways, totalFetched };
-    
+
   } catch (error) {
-    console.error('Error loading AR.IO SDK:', error);
+    console.error('Error fetching from AR.IO network:', error);
     throw new Error('Failed to fetch gateways from network. Please ensure @ar.io/sdk is installed.');
   }
 }
 
 export async function fetchDistributions(epochIndex?: number): Promise<{ rewards?: Record<string, number>; totalEligibleGatewayReward?: number } | null> {
   try {
-    const { ARIO } = await import('@ar.io/sdk');
-    const ario = ARIO.mainnet();
-    
+    const { ario } = await initSolanaArio();
+
     console.log('Fetching distribution data...');
     const distributions = await ario.getDistributions(epochIndex ? { epochIndex } : undefined);
     

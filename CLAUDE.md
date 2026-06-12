@@ -15,7 +15,7 @@ Network Centralization Analyzers for the Arweave ecosystem:
 
 - `npm run analyze` - Run AR.IO gateway analyzer with real network data
 - `npm run analyze:demo` - Run with demo data for testing
-- `npm run analyze:performance` - Enable technical fingerprinting
+- `npm run analyze:fast` - Skip technical fingerprinting (faster)
 
 ### Arweave Node Analyzer
 
@@ -28,6 +28,8 @@ Network Centralization Analyzers for the Arweave ecosystem:
 - `npm run build` - Build TypeScript to JavaScript
 - `npm run lint` - Run ESLint
 - `npm run format` - Format code with Prettier
+- `npm run clean` - Remove dist/ and generated CSV/JSON files
+- `tsx regenerate-html.ts [DATE]` - Regenerate HTML report from existing CSV/JSON data
 
 ### Environment Variables
 
@@ -38,18 +40,35 @@ Network Centralization Analyzers for the Arweave ecosystem:
 - `USE_DEMO_DATA=true` - Use demo data instead of real network
 - `ANALYZE_PERFORMANCE=true` - Enable performance fingerprinting
 - `MIN_STAKE` - Minimum stake threshold (default: 10000)
+- `DNS_CONCURRENCY` - Parallel DNS resolution requests (default: 50)
+- `FINGERPRINT_CONCURRENCY` - Parallel fingerprinting requests (default: 20)
+- `SKIP_MIGRATION_CHECK=true` - Skip Solana migration lookup via Goldsky
 
 **Arweave Node Analyzer:**
 
-- `MAX_NODES` - Maximum nodes to crawl (default: 1000)
-- `CONCURRENCY` - Parallel requests (default: 10)
-- `TIMEOUT` - Request timeout in ms (default: 10000)
+- `MAX_NODES` - Maximum nodes to crawl (default: 5000)
+- `CONCURRENCY` - Parallel requests (default: 30)
+- `TIMEOUT` - Request timeout in ms (default: 3000)
+- `DELAY` - Delay between requests in ms (default: 20)
+- `RETRIES` - Retry failed requests (default: 1)
 - `SKIP_GEO=true` - Skip geographic lookups
 - `USE_DEMO_DATA=true` - Use demo data
+- `SEED_NODES` - Comma-separated seed addresses (default: fetched from arweave.net)
+- `OUTPUT_DIR` - Output directory for reports (default: `reports`)
+
+## Technical Setup
+
+- **ESM project**: `"type": "module"` in package.json — use `import`/`export`, not `require`
+- **Runtime**: Scripts run via `tsx` (TypeScript execution without compilation). `npm run build` compiles to `dist/` but is not needed for development
+- **No test framework**: No unit tests exist; validation is done by running analyzers with `USE_DEMO_DATA=true`
+- **Reports are gitignored**: Output goes to `reports/` directory which is in `.gitignore`
+- **Code style**: Prettier (single quotes, 100 char width, trailing commas es5, 2-space indent) and ESLint (`@typescript-eslint/no-explicit-any` is warn-only, unused vars error with `_` prefix exception)
 
 ## Architecture & Key Components
 
-### Core Analysis Flow
+### AR.IO Gateway Analyzer
+
+**Entry point**: `src/index.ts` → orchestrates fetch, analyze, report pipeline
 
 1. **Gateway Fetching** (`src/data/gateway-fetcher.ts`)
    - Fetches gateway data from AR.IO network using `@ar.io/sdk`
@@ -72,11 +91,21 @@ Network Centralization Analyzers for the Arweave ecosystem:
    - Stake: 10% - Minimum stake patterns
    - Technical: 10% - Similar server configurations
 
-4. **Report Generation** (`src/utils/`)
-   - Output to `reports/` directory
-   - CSV: Detailed per-gateway analysis
-   - JSON: Machine-readable summary with cluster data
-   - HTML: Interactive dashboard with charts and filters
+4. **Solana Migration Check** (`src/data/migration-checker.ts`)
+   - Queries Goldsky GraphQL (`arweave-search.goldsky.com`) for `AR-IO-Solana-Registration` attestations per gateway wallet
+   - Batches `owners` lookups (50/req); persists permanent migrations to `reports/migration-cache.json`
+   - Informational only — does not feed into the centralization score
+   - Produces `MigrationStats` (migrated count/percentage, stake-weighted migration %, unmigrated gateway list)
+
+5. **AR.IO Version Detection**
+   - Technical fingerprint fetches gateway root with `Accept-Encoding: identity` so the response body can be parsed for `arIoVersion`/`arIoRelease`
+   - Aggregated into `VersionStats` (top version, distribution, % reporting) — informational only
+
+6. **Report Generation** (`src/utils/`)
+   - CSV: Detailed per-gateway analysis (`report-generator.ts`)
+   - JSON: Machine-readable summary with cluster data (`report-generator.ts`)
+   - HTML: Interactive dashboard with charts, Globe.gl visualization, and filters (`html-generator.ts`)
+   - Console: Summary output (`display.ts`)
 
 ### Cluster Detection Logic
 
@@ -100,13 +129,15 @@ Key flags added to `suspicionNotes` array:
 
 ### Important Implementation Details
 
-- **Rate Limiting**: Geographic lookups limited to 45/min (1.4s delay between requests)
+- **Rate Limiting**: Geographic lookups (ip-api.com free tier) limited to 45/min (1.4s delay between requests)
 - **Scoring Ranges**: 0.0-0.4 (low), 0.4-0.7 (medium), 0.7-1.0 (high) centralization
 - **Economic Impact**: Calculates ARIO rewards going to centralized clusters based on per-gateway rewards
 
 ---
 
 ## Arweave Node Analyzer (`src/arweave/`)
+
+**Entry point**: `src/arweave/arweave-index.ts`
 
 ### Architecture
 
@@ -133,40 +164,6 @@ Key flags added to `suspicionNotes` array:
    - Node coloring by risk/community/country/cluster
    - Charts for infrastructure and geographic distribution
 
-### Key Data Structures
-
-```typescript
-interface ArweaveNodeAnalysis {
-  ip: string;
-  port: number;
-  address: string; // "ip:port"
-
-  // Node info
-  version?: number;
-  height?: number;
-  peers?: number;
-  isResponsive: boolean;
-
-  // Graph metrics
-  degree: number;
-  inDegree: number;
-  outDegree: number;
-  betweennessCentrality?: number;
-  communityId?: number;
-
-  // Centralization scores (0-1)
-  geographicCentralization: number;
-  networkCentralization: number;
-  infrastructureCentralization: number;
-  overallCentralization: number;
-
-  // Clustering
-  clusterId: string;
-  ipRange24: string; // /24 subnet
-  suspicionNotes: string[];
-}
-```
-
 ### Suspicion Notes (Arweave)
 
 - `same_ip_range_24` - Multiple nodes in /24 subnet
@@ -176,6 +173,11 @@ interface ArweaveNodeAnalysis {
 - `datacenter_hosting` - Hosted in known datacenter
 - `provider_dominance` - Major cloud provider concentration
 - `community_concentration` - Tight peer graph community
+
+### Types
+
+- AR.IO types: `src/types.ts` (`GatewayAnalysis`, `CentralizationReport`)
+- Arweave types: `src/arweave/arweave-types.ts` (`ArweaveNodeAnalysis`, `ArweaveNetworkReport`)
 
 ---
 

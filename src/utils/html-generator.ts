@@ -10,6 +10,20 @@ export function generateHTMLReport(
   csvFilename: string,
   jsonFilename: string
 ): string {
+  const migrationByFqdn = new Map<string, GatewayAnalysis>();
+  for (const g of csvData) migrationByFqdn.set(g.fqdn, g);
+  const migrationChecked = !!summary.migrationStats?.checked;
+  const migrationCellHtml = (fqdn: string): string => {
+    if (!migrationChecked) return '';
+    const gw = migrationByFqdn.get(fqdn);
+    if (!gw || gw.migratedToSolana === undefined) {
+      return '<td><span class="migration-badge migration-unknown">—</span></td>';
+    }
+    return gw.migratedToSolana
+      ? '<td><span class="migration-badge migration-yes">✓ Migrated</span></td>'
+      : '<td><span class="migration-badge migration-no">Not yet</span></td>';
+  };
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -472,6 +486,101 @@ export function generateHTMLReport(
             color: var(--text-muted);
             white-space: nowrap;
             line-height: 1.4;
+        }
+
+        .migration-panel {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            border-left: 4px solid #9945FF;
+        }
+
+        .migration-panel h2 {
+            font-size: 1.05rem;
+            margin: 0 0 4px 0;
+            color: var(--text-color);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .migration-panel .panel-subtitle {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            margin-bottom: 16px;
+        }
+
+        .migration-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .migration-metric .metric-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .migration-metric .metric-value {
+            font-size: 1.6rem;
+            font-weight: 700;
+            color: var(--text-color);
+            margin-bottom: 8px;
+        }
+
+        .migration-metric .metric-detail {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .progress-bar {
+            background: var(--bg-color);
+            height: 10px;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #14F195 0%, #9945FF 100%);
+            height: 100%;
+            transition: width 0.6s ease;
+        }
+
+        @media (max-width: 768px) {
+            .migration-metrics { grid-template-columns: 1fr; }
+        }
+
+        .migration-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            white-space: nowrap;
+        }
+        .migration-yes {
+            background: #E0F7E9;
+            color: #0F6D3F;
+        }
+        .migration-no {
+            background: #F1F2F4;
+            color: #4B5563;
+        }
+        .migration-unknown {
+            background: var(--bg-color);
+            color: var(--text-muted);
+        }
+        [data-theme="dark"] .migration-yes {
+            background: #0F6D3F;
+            color: #E0F7E9;
+        }
+        [data-theme="dark"] .migration-no {
+            background: #374151;
+            color: #D1D5DB;
         }
 
         .cluster-details {
@@ -1013,7 +1122,37 @@ export function generateHTMLReport(
                     <div class="tooltip">Total $ARIO rewards distributed to gateways this epoch. Rewards incentivize gateway operators to maintain uptime and performance.</div>
                 </div>
                 ` : ''}
+                ${summary.versionStats ? `
+                <div class="stat-card">
+                    <h3>Top Gateway Version</h3>
+                    <div class="value" style="font-size: 1.4rem;">${summary.versionStats.topVersion ?? '—'}</div>
+                    <div class="subtitle">${summary.versionStats.topVersionCount}/${summary.versionStats.totalReporting} reporting (${summary.versionStats.topVersionPercentage.toFixed(1)}%) · ${summary.versionStats.distribution.length} unique</div>
+                    <div class="info-icon">?</div>
+                    <div class="tooltip">Most common AR.IO gateway version reported via /ar-io/info. High concentration on one version is healthy (operators upgrading); a wide spread of old versions is a stagnation signal.</div>
+                </div>
+                ` : ''}
             </div>
+
+            ${summary.migrationStats?.checked ? `
+            <div class="migration-panel">
+                <h2>🔗 Solana Migration Progress</h2>
+                <div class="panel-subtitle">Gateway operators who have completed the AR.IO → Solana migration on-chain.</div>
+                <div class="migration-metrics">
+                    <div class="migration-metric">
+                        <div class="metric-label">By Gateway Count</div>
+                        <div class="metric-value">${summary.migrationStats.migratedCount} / ${summary.migrationStats.totalGateways} <span style="font-size: 1rem; font-weight: 500; color: var(--text-muted);">(${summary.migrationStats.migratedPercentage.toFixed(1)}%)</span></div>
+                        <div class="progress-bar"><div class="progress-bar-fill" style="width: ${summary.migrationStats.migratedPercentage.toFixed(2)}%;"></div></div>
+                        <div class="metric-detail">${summary.migrationStats.totalGateways - summary.migrationStats.migratedCount} gateways remaining</div>
+                    </div>
+                    <div class="migration-metric">
+                        <div class="metric-label">By Staked $ARIO</div>
+                        <div class="metric-value">${Math.round(summary.migrationStats.migratedStake / 1e6).toLocaleString()} / ${Math.round(summary.migrationStats.totalStake / 1e6).toLocaleString()} <span style="font-size: 1rem; font-weight: 500; color: var(--text-muted);">(${summary.migrationStats.migratedStakePercentage.toFixed(1)}%)</span></div>
+                        <div class="progress-bar"><div class="progress-bar-fill" style="width: ${summary.migrationStats.migratedStakePercentage.toFixed(2)}%;"></div></div>
+                        <div class="metric-detail">Stake-weighted adoption</div>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
 
             <div class="charts-grid">
                 <div class="chart-card">
@@ -1039,6 +1178,14 @@ export function generateHTMLReport(
                     <h2>Top Hosting Providers</h2>
                     <div style="height: 300px;">
                         <canvas id="overviewProvidersChart"></canvas>
+                    </div>
+                </div>
+                ` : ''}
+                ${summary.versionStats ? `
+                <div class="chart-card">
+                    <h2>Gateway Version Distribution</h2>
+                    <div style="height: 300px;">
+                        <canvas id="overviewVersionChart"></canvas>
                     </div>
                 </div>
                 ` : ''}
@@ -1075,6 +1222,7 @@ export function generateHTMLReport(
                         <th class="sortable" onclick="sortTable('summaryTable', 1, 'string')">Gateway <span class="sort-icon">⇅</span></th>
                         <th class="sortable" onclick="sortTable('summaryTable', 2, 'number')">Centralization Score <span class="sort-icon">⇅</span></th>
                         <th class="sortable" onclick="sortTable('summaryTable', 3, 'string')">Risk Level <span class="sort-icon">⇅</span></th>
+                        ${migrationChecked ? `<th class="sortable" onclick="sortTable('summaryTable', 4, 'string')">Solana Migration <span class="sort-icon">⇅</span></th>` : ''}
                         <th>Suspicion Reasons</th>
                     </tr>
                 </thead>
@@ -1097,6 +1245,7 @@ export function generateHTMLReport(
                                     ${gateway.score > 0.7 ? 'High' : gateway.score > 0.4 ? 'Medium' : 'Low'}
                                 </span>
                             </td>
+                            ${migrationCellHtml(gateway.fqdn)}
                             <td>
                                 ${gateway.reasons
                                   .map(
@@ -1744,7 +1893,7 @@ export function generateHTMLReport(
         };
 
         // Overview charts initialization
-        let overviewRiskChart, overviewDomainsChart, overviewGeoChart, overviewProvidersChart, clusterCy;
+        let overviewRiskChart, overviewDomainsChart, overviewGeoChart, overviewProvidersChart, overviewVersionChart, clusterCy;
 
         function initOverviewCharts() {
             const distributionData = {
@@ -1846,6 +1995,32 @@ export function generateHTMLReport(
                             label: 'Gateways',
                             data: providerData.map(p => p.count),
                             backgroundColor: '#F59E0B',
+                            borderWidth: 0,
+                            borderRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: { legend: { display: false } },
+                        scales: { x: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // Version distribution chart
+            const versionCtx = document.getElementById('overviewVersionChart')?.getContext('2d');
+            if (versionCtx && !overviewVersionChart) {
+                const versionData = ${JSON.stringify(summary.versionStats?.distribution.slice(0, 10) || [])};
+                overviewVersionChart = new Chart(versionCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: versionData.map(v => v.version),
+                        datasets: [{
+                            label: 'Gateways',
+                            data: versionData.map(v => v.count),
+                            backgroundColor: '#9945FF',
                             borderWidth: 0,
                             borderRadius: 4
                         }]
@@ -2300,6 +2475,7 @@ export function generateHTMLReport(
             updateBarChart(overviewDomainsChart);
             updateBarChart(overviewGeoChart);
             updateBarChart(overviewProvidersChart);
+            updateBarChart(overviewVersionChart);
 
             // Update infrastructure charts
             if (hostingTypeChart && hostingTypeChart.options.plugins.legend) {

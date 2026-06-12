@@ -15,6 +15,7 @@ import type {
   InfrastructureImpact
 } from './types.js';
 import { fetchGatewaysFromNetwork, getDemoGateways, fetchDistributions } from './data/gateway-fetcher.js';
+import { checkMigrationStatus, type MigrationResult } from './data/migration-checker.js';
 import { generateCSV, generateJSON } from './utils/report-generator.js';
 import { generateHTMLReport } from './utils/html-generator.js';
 import { printSummary } from './utils/display.js';
@@ -26,6 +27,8 @@ export class GatewayCentralizationAnalyzer {
   private technicalFingerprints = new Map<string, TechnicalFingerprint>();
   private distributionData: { rewards?: Record<string, number>; totalEligibleGatewayReward?: number; totalDistributedRewards?: number } | null = null;
   private totalGatewaysInNetwork = 0;
+  private migrationResults = new Map<string, MigrationResult>();
+  private migrationChecked = false;
 
   constructor(config: AnalyzerConfig) {
     this.config = config;
@@ -38,7 +41,8 @@ export class GatewayCentralizationAnalyzer {
     console.log(`  Geographic Analysis: ${process.env.SKIP_GEO ? 'Disabled' : 'Enabled'}`);
     console.log(`  Min Stake Threshold: ${this.config.minStake}`);
     console.log(`  DNS Concurrency: ${this.config.dnsConcurrency || 50}`);
-    console.log(`  Fingerprint Concurrency: ${this.config.fingerprintConcurrency || 20}\n`);
+    console.log(`  Fingerprint Concurrency: ${this.config.fingerprintConcurrency || 20}`);
+    console.log(`  Solana Migration Check: ${this.config.skipMigrationCheck ? 'Disabled' : 'Enabled'}\n`);
     
     try {
       // 1. Fetch all gateways
@@ -104,7 +108,21 @@ export class GatewayCentralizationAnalyzer {
         console.log(`   Retrieved fingerprints for ${fingerprintResults.size}/${gateways.length} gateways`);
       }
 
-      // 5. Combine all data into analysis results
+      // 5. Check Solana migration status (informational — not fed into centralization score)
+      if (!this.config.skipMigrationCheck && !this.config.useDemoData) {
+        console.log('\n🔗 Checking Solana migration status...');
+        const wallets = [...new Set(gateways.map((g) => g.wallet).filter(Boolean))];
+        try {
+          this.migrationResults = await checkMigrationStatus(wallets);
+          this.migrationChecked = true;
+          const migrated = Array.from(this.migrationResults.values()).filter((r) => r.migrated).length;
+          console.log(`   ${migrated}/${wallets.length} unique wallets have migrated to Solana`);
+        } catch (err) {
+          console.warn(`   ⚠️  Migration check failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+
+      // 6. Combine all data into analysis results
       console.log('\n🔬 Combining analysis data...');
       for (let i = 0; i < gateways.length; i++) {
         const gateway = gateways[i];
@@ -259,6 +277,8 @@ export class GatewayCentralizationAnalyzer {
         serverHeader: fingerprint.serverHeader,
         httpVersion: fingerprint.httpVersion,
         supportedCompression: fingerprint.acceptsCompression,
+        arIoVersion: fingerprint.arIoVersion,
+        arIoRelease: fingerprint.arIoRelease,
         certIssuer: fingerprint.certInfo?.issuer,
         certIssueDate: fingerprint.certInfo?.issued,
         certExpiryDate: fingerprint.certInfo?.expires,
@@ -273,12 +293,26 @@ export class GatewayCentralizationAnalyzer {
       suspicionNotes.push('minimum_stake');
     }
 
+    // Solana migration status (informational — does not affect centralization score)
+    const migration = this.migrationResults.get(gateway.wallet);
+    const migrationFields = migration
+      ? {
+          migratedToSolana: migration.migrated,
+          migrationTxId: migration.txId,
+          solanaPubkey: migration.solanaPubkey,
+          migrationTimestamp: migration.timestamp,
+        }
+      : this.migrationChecked
+        ? { migratedToSolana: false }
+        : {};
+
     return {
       fqdn: gateway.fqdn,
       wallet: gateway.wallet,
       stake: gateway.stake,
       status: gateway.status,
       registrationTimestamp: gateway.startTimestamp,
+      ...migrationFields,
 
       ...domainInfo,
       baseDomain: domainInfo.baseDomain || gateway.fqdn,
@@ -359,7 +393,8 @@ export class GatewayCentralizationAnalyzer {
   private async getTechnicalFingerprint(fqdn: string): Promise<TechnicalFingerprint | null> {
     return new Promise((resolve) => {
       const startTime = Date.now();
-      
+      const fingerprint: Partial<TechnicalFingerprint> = { acceptsCompression: [] };
+
       const options = {
         hostname: fqdn,
         port: 443,
@@ -367,59 +402,84 @@ export class GatewayCentralizationAnalyzer {
         method: 'GET',
         timeout: 5000,
         headers: {
-          'Accept-Encoding': 'gzip, deflate, br',
-          'User-Agent': 'AR-IO-Centralization-Analyzer/1.0'
-        }
+          'Accept-Encoding': 'identity', // We need to parse the body, so skip gzip/br
+          'User-Agent': 'AR-IO-Centralization-Analyzer/1.0',
+        },
       };
-      
+
       const req = https.request(options, (res) => {
-        const responseTime = Date.now() - startTime;
-        const headers = new Map(Object.entries(res.headers).map(([k, v]) => [k, String(v)]));
-        
-        const fingerprint: TechnicalFingerprint = {
-          responseTime,
-          httpVersion: res.httpVersion,
-          responseHeaders: headers,
-          serverHeader: res.headers['server'] as string | undefined,
-          poweredBy: res.headers['x-powered-by'] as string | undefined,
-          acceptsCompression: [],
-        };
-        
-        // Check compression support
+        fingerprint.responseTime = Date.now() - startTime;
+        fingerprint.httpVersion = res.httpVersion;
+        fingerprint.responseHeaders = new Map(
+          Object.entries(res.headers).map(([k, v]) => [k, String(v)])
+        );
+        fingerprint.serverHeader = res.headers['server'] as string | undefined;
+        fingerprint.poweredBy = res.headers['x-powered-by'] as string | undefined;
+
         const contentEncoding = res.headers['content-encoding'];
         if (contentEncoding && typeof contentEncoding === 'string') {
-          fingerprint.acceptsCompression = contentEncoding.split(',').map(s => s.trim());
+          fingerprint.acceptsCompression = contentEncoding.split(',').map((s) => s.trim());
         }
-        
-        res.on('data', () => {}); // Consume response
-        res.on('end', () => resolve(fingerprint));
+
+        // Buffer body so we can parse /ar-io/info JSON for the gateway version.
+        // Cap body to avoid OOM on a misbehaving server.
+        const chunks: Buffer[] = [];
+        let total = 0;
+        const MAX_BODY = 256 * 1024;
+        res.on('data', (chunk: Buffer) => {
+          total += chunk.length;
+          if (total <= MAX_BODY) chunks.push(chunk);
+        });
+        res.on('end', () => {
+          if (chunks.length > 0) {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as {
+                version?: string;
+                release?: string | number;
+              };
+              if (body.version) fingerprint.arIoVersion = String(body.version);
+              if (body.release !== undefined) fingerprint.arIoRelease = String(body.release);
+            } catch {
+              // Not JSON or malformed — leave version unset
+            }
+          }
+          resolve(fingerprint as TechnicalFingerprint);
+        });
       });
-      
-      req.on('secureConnect', () => {
-        const socket = req.socket as tls.TLSSocket;
-        const cert = socket.getPeerCertificate();
-        
-        if (cert && cert.issuer) {
-          const reqWithFingerprint = req as typeof req & { fingerprint?: TechnicalFingerprint };
-          const fingerprint = reqWithFingerprint.fingerprint || ({} as TechnicalFingerprint);
-          fingerprint.certInfo = {
-            issuer: cert.issuer.O || 'Unknown',
-            issued: new Date(cert.valid_from),
-            expires: new Date(cert.valid_to),
-            subject: cert.subject?.CN || 'Unknown',
-          };
-          fingerprint.tlsVersion = socket.getProtocol() || undefined;
-          fingerprint.tlsCiphers = [socket.getCipher()?.name].filter(Boolean) as string[];
-          reqWithFingerprint.fingerprint = fingerprint;
+
+      // secureConnect fires on the TLSSocket, not on the ClientRequest. Attach via 'socket'.
+      req.on('socket', (sock) => {
+        const captureCert = () => {
+          const tlsSock = sock as tls.TLSSocket;
+          const cert = tlsSock.getPeerCertificate();
+          if (cert && cert.issuer) {
+            fingerprint.certInfo = {
+              issuer: cert.issuer.O || cert.issuer.CN || 'Unknown',
+              issued: new Date(cert.valid_from),
+              expires: new Date(cert.valid_to),
+              subject: cert.subject?.CN || 'Unknown',
+            };
+            fingerprint.tlsVersion = tlsSock.getProtocol() || undefined;
+            fingerprint.tlsCiphers = [tlsSock.getCipher()?.name].filter(Boolean) as string[];
+          }
+        };
+        // If TLS already handshook (reused socket from agent pool), grab it now.
+        if ((sock as tls.TLSSocket).getPeerCertificate) {
+          const existing = (sock as tls.TLSSocket).getPeerCertificate();
+          if (existing && Object.keys(existing).length > 0) {
+            captureCert();
+            return;
+          }
         }
+        sock.once('secureConnect', captureCert);
       });
-      
+
       req.on('error', () => resolve(null));
       req.on('timeout', () => {
         req.destroy();
         resolve(null);
       });
-      
+
       req.end();
     });
   }
@@ -894,6 +954,14 @@ export class GatewayCentralizationAnalyzer {
     // Calculate infrastructure impact (only resolved gateways)
     const infrastructureImpact = this.calculateInfrastructureImpact(resolvedGateways);
 
+    // Calculate Solana migration stats (over ALL gateways, including DNS-failed —
+    // migration is independent of whether the gateway is currently reachable)
+    const migrationStats = this.calculateMigrationStats();
+
+    // Calculate AR.IO gateway version distribution (only resolved gateways that
+    // responded to /ar-io/info)
+    const versionStats = this.calculateVersionStats(resolvedGateways);
+
     return {
       timestamp: new Date().toISOString(),
       totalGateways: resolvedGateways.length,
@@ -912,7 +980,77 @@ export class GatewayCentralizationAnalyzer {
           reasons: g.suspicionNotes
         })),
       economicImpact,
-      infrastructureImpact
+      infrastructureImpact,
+      migrationStats,
+      versionStats,
+    };
+  }
+
+  private calculateVersionStats(gateways: GatewayAnalysis[]) {
+    // /ar-io/info returns `release` (e.g. "77") rather than `version`. Prefer that;
+    // fall back to `arIoVersion` if present (older gateways may report it).
+    const versionCounts = new Map<string, number>();
+    let totalReporting = 0;
+    for (const gw of gateways) {
+      const v = gw.arIoRelease || gw.arIoVersion;
+      if (v) {
+        versionCounts.set(v, (versionCounts.get(v) || 0) + 1);
+        totalReporting++;
+      }
+    }
+
+    if (totalReporting === 0) return undefined;
+
+    const distribution = Array.from(versionCounts.entries())
+      .map(([version, count]) => ({
+        version,
+        count,
+        percentage: (count / totalReporting) * 100,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const top = distribution[0];
+
+    return {
+      totalReporting,
+      totalGateways: gateways.length,
+      topVersion: top?.version,
+      topVersionCount: top?.count || 0,
+      topVersionPercentage: top?.percentage || 0,
+      distribution,
+    };
+  }
+
+  private calculateMigrationStats() {
+    if (!this.migrationChecked) return undefined;
+
+    const totalGateways = this.results.length;
+    let migratedCount = 0;
+    let totalStake = 0;
+    let migratedStake = 0;
+    const unmigratedGateways: Array<{ fqdn: string; wallet: string; stake: number }> = [];
+
+    for (const gw of this.results) {
+      totalStake += gw.stake;
+      if (gw.migratedToSolana) {
+        migratedCount++;
+        migratedStake += gw.stake;
+      } else {
+        unmigratedGateways.push({ fqdn: gw.fqdn, wallet: gw.wallet, stake: gw.stake });
+      }
+    }
+
+    unmigratedGateways.sort((a, b) => b.stake - a.stake);
+
+    return {
+      checked: true,
+      totalGateways,
+      migratedCount,
+      migratedPercentage: totalGateways > 0 ? (migratedCount / totalGateways) * 100 : 0,
+      totalStake,
+      migratedStake,
+      migratedStakePercentage: totalStake > 0 ? (migratedStake / totalStake) * 100 : 0,
+      unmigratedGateways,
     };
   }
   

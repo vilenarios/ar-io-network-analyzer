@@ -61,7 +61,12 @@ const csvData: GatewayAnalysis[] = lines
       clusterId: cols[31],
       clusterSize: parseInt(cols[32]) || 0,
       clusterRole: (cols[33] as 'primary' | 'secondary') || 'primary',
-      suspicionNotes: cols[34] ? cols[34].split(';').filter(Boolean) : []
+      suspicionNotes: cols[34] ? cols[34].split(';').filter(Boolean) : [],
+      migratedToSolana: cols[35] === 'true' ? true : cols[35] === 'false' ? false : undefined,
+      solanaPubkey: cols[36] && cols[36] !== 'N/A' ? cols[36] : undefined,
+      migrationTxId: cols[37] && cols[37] !== 'N/A' ? cols[37] : undefined,
+      arIoVersion: cols[38] && cols[38] !== 'N/A' ? cols[38] : undefined,
+      arIoRelease: cols[39] && cols[39] !== 'N/A' ? cols[39] : undefined,
     };
   });
 

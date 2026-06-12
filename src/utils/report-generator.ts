@@ -12,7 +12,9 @@ export function generateCSV(results: GatewayAnalysis[]): string {
     'country,countryCode,region,city,latitude,longitude,timezone,isp,asn,hosting,' +
     'responseTime,serverHeader,httpVersion,certIssuer,registrationDate,' +
     'domainScore,geoScore,networkScore,temporalScore,technicalScore,stakeScore,overallScore,' +
-    'clusterId,clusterSize,clusterRole,suspicionNotes'
+    'clusterId,clusterSize,clusterRole,suspicionNotes,' +
+    'migratedToSolana,solanaPubkey,migrationTxId,' +
+    'arIoVersion,arIoRelease'
   ];
 
   // Data rows
@@ -52,7 +54,12 @@ export function generateCSV(results: GatewayAnalysis[]): string {
       result.clusterId,
       result.clusterSize.toString(),
       result.clusterRole,
-      result.suspicionNotes.join(';')
+      result.suspicionNotes.join(';'),
+      result.migratedToSolana === undefined ? 'unknown' : result.migratedToSolana ? 'true' : 'false',
+      result.solanaPubkey || 'N/A',
+      result.migrationTxId || 'N/A',
+      result.arIoVersion || 'N/A',
+      result.arIoRelease || 'N/A'
     ].map(escapeCSV).join(','));
   });
   
