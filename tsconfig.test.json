@@ -1,0 +1,6 @@
+{
+  "//": "Typecheck-only config that also covers test/. The build config sets rootDir=src and include=src/**, so `yarn build` never compiles tests — which hid a real field-name bug (org vs asnOrg) that still let the suite pass, because tsx strips types at runtime.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": ["src/**/*", "test/**/*"]
+}

@@ -29,7 +29,7 @@ function gateway(overrides: Partial<GatewayAnalysis> = {}): GatewayAnalysis {
     ipRange: '192.0.2',
     asn: 'AS1',
     isp: 'Example ISP',
-    org: 'Example Org',
+    asnOrg: 'Example Org',
     city: 'Somewhere',
     country: 'Nowhere',
     domainScore: 0,
@@ -63,7 +63,7 @@ function summary(gateways: GatewayAnalysis[]): CentralizationReport {
 }
 
 test('a hostile geo field cannot break out of the embedded script payload', () => {
-  const rows = [gateway({ isp: PAYLOAD, org: PAYLOAD, city: PAYLOAD })];
+  const rows = [gateway({ isp: PAYLOAD, asnOrg: PAYLOAD, city: PAYLOAD })];
   const html = generateHTMLReport(summary(rows), rows, 'a.csv', 'b.json');
 
   // The payload survives as TEXT — that is correct, it is data — but it must
