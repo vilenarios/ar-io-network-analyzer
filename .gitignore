@@ -48,3 +48,16 @@ tmp/
 temp/
 *.tmp
 *.temp
+# Observation capture database (irreplaceable — back it up, do not commit)
+# Anchored: an unanchored `data/` would also swallow src/data/.
+/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Published static tree
+/public/
+/public.tmp/
+
+# Keep the Node version pin tracked
+!.nvmrc

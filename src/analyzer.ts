@@ -2,7 +2,6 @@
  * Main analyzer class for gateway centralization detection
  */
 
-import { resolve4 } from 'dns/promises';
 import * as https from 'https';
 import * as tls from 'tls';
 import type {
@@ -16,10 +15,13 @@ import type {
 } from './types.js';
 import { fetchGatewaysFromNetwork, getDemoGateways, fetchDistributions } from './data/gateway-fetcher.js';
 import { checkMigrationStatus, type MigrationResult } from './data/migration-checker.js';
-import { generateCSV, generateJSON } from './utils/report-generator.js';
+import { buildCSV, buildSummaryJSON, generateCSV, generateJSON } from './utils/report-generator.js';
 import { generateHTMLReport } from './utils/html-generator.js';
 import { printSummary } from './utils/display.js';
 import { batchGeoLocation } from './utils/geo-location.js';
+import { resolveGatewayIps } from './utils/dns.js';
+import { toGatewayDocument, toNetworkDocument } from './publish/contract.js';
+import { loadObserverContext, publishDocuments } from './publish/publish.js';
 
 export class GatewayCentralizationAnalyzer {
   private config: AnalyzerConfig;
@@ -34,7 +36,12 @@ export class GatewayCentralizationAnalyzer {
     this.config = config;
   }
   
-  async analyze() {
+  /**
+   * Run the full analysis and return what it produced, so callers (the
+   * publisher, the findings cadence) can consume the results without
+   * re-reading the report files.
+   */
+  async analyze(): Promise<{ results: GatewayAnalysis[]; summary: CentralizationReport }> {
     console.log('Configuration:');
     console.log(`  Process ID: ${this.config.processId}`);
     console.log(`  Performance Analysis: ${this.config.analyzePerformance ? 'Enabled' : 'Disabled'}`);
@@ -163,8 +170,10 @@ export class GatewayCentralizationAnalyzer {
       this.calculateFinalScores();
 
       // 11. Generate outputs
-      await this.generateReports();
-      
+      const summary = await this.generateReports();
+
+      return { results: this.results, summary };
+
     } catch (error) {
       console.error('\n❌ Error:', error);
       throw error;
@@ -172,36 +181,16 @@ export class GatewayCentralizationAnalyzer {
   }
   
   /**
-   * Parallel DNS resolution with concurrency limit
+   * Parallel DNS resolution with concurrency limit.
+   * The implementation lives in `utils/dns.ts` so other cadences can reuse it.
    */
   private async parallelDnsResolve(gateways: Gateway[]): Promise<Array<{ fqdn: string; ip: string; ipRange: string }>> {
-    const concurrency = this.config.dnsConcurrency || 50;
-    const results: Array<{ fqdn: string; ip: string; ipRange: string }> = [];
-    let completed = 0;
-
-    // Worker function
-    const resolveDns = async (gateway: Gateway): Promise<{ fqdn: string; ip: string; ipRange: string }> => {
-      try {
-        const addresses = await resolve4(gateway.fqdn);
-        const ip = addresses[0];
-        const ipParts = ip.split('.');
-        const ipRange = `${ipParts[0]}.${ipParts[1]}.${ipParts[2]}.0/24`;
-        return { fqdn: gateway.fqdn, ip, ipRange };
-      } catch {
-        return { fqdn: gateway.fqdn, ip: 'resolution_failed', ipRange: 'unknown' };
-      }
-    };
-
-    // Process in batches with concurrency limit
-    for (let i = 0; i < gateways.length; i += concurrency) {
-      const batch = gateways.slice(i, i + concurrency);
-      const batchResults = await Promise.all(batch.map(resolveDns));
-      results.push(...batchResults);
-      completed += batch.length;
-      process.stdout.write(`\r   [${completed}/${gateways.length}] Resolving DNS...`);
-    }
+    const results = await resolveGatewayIps(
+      gateways,
+      this.config.dnsConcurrency || 50,
+      (completed, total) => process.stdout.write(`\r   [${completed}/${total}] Resolving DNS...`)
+    );
     process.stdout.write('\n');
-
     return results;
   }
 
@@ -895,7 +884,7 @@ export class GatewayCentralizationAnalyzer {
     });
   }
   
-  private async generateReports() {
+  private async generateReports(): Promise<CentralizationReport> {
     // Sort by centralization score
     this.results.sort((a, b) => b.overallCentralization - a.overallCentralization);
     
@@ -908,8 +897,16 @@ export class GatewayCentralizationAnalyzer {
     const jsonFilename = generateJSON(summary);
     console.log(`📋 Summary saved to ${jsonFilename}`);
     
-    // Generate HTML report
-    const htmlContent = generateHTMLReport(summary, this.results, csvFilename, jsonFilename);
+    // Generate HTML report. Observer findings come from the database when it
+    // exists; an empty list simply hides the Observers tab.
+    const observerContext = loadObserverContext();
+    const htmlContent = generateHTMLReport(
+      summary,
+      this.results,
+      csvFilename,
+      jsonFilename,
+      observerContext.findings
+    );
     const htmlFilename = `reports/gateway-centralization-report-${new Date().toISOString().split('T')[0]}.html`;
     const { writeFileSync, existsSync, mkdirSync } = await import('fs');
     
@@ -920,9 +917,23 @@ export class GatewayCentralizationAnalyzer {
     
     writeFileSync(htmlFilename, htmlContent);
     console.log(`🌐 Interactive report saved to ${htmlFilename}`);
-    
+
+    // Publish the same content as a static tree for the portal and server.
+    await publishDocuments({
+      network: toNetworkDocument(summary, observerContext.rollup, this.results),
+      gateways: toGatewayDocument(this.results, observerContext.byGateway),
+      homepage: {
+        html: htmlContent,
+        csv: buildCSV(this.results),
+        summaryJson: buildSummaryJSON(summary),
+        date: new Date().toISOString().split('T')[0],
+      },
+    });
+
     // Print summary to console
     printSummary(summary, this.config.analyzePerformance);
+
+    return summary;
   }
   
   private generateSummary(): CentralizationReport {

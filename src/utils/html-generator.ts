@@ -3,12 +3,23 @@
  */
 
 import type { CentralizationReport, GatewayAnalysis } from '../types.js';
+import type { Finding } from '../observers/types.js';
+
+/** Minimal escaping for observer-independence values rendered into the body. */
+function escapeHtmlText(value: unknown): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 export function generateHTMLReport(
   summary: CentralizationReport,
   csvData: GatewayAnalysis[],
   csvFilename: string,
-  jsonFilename: string
+  jsonFilename: string,
+  findings: Finding[] = []
 ): string {
   const migrationByFqdn = new Map<string, GatewayAnalysis>();
   for (const g of csvData) migrationByFqdn.set(g.fqdn, g);
@@ -1050,6 +1061,7 @@ export function generateHTMLReport(
             <button class="tab" onclick="switchTab('performance')">Performance</button>
             <button class="tab" onclick="switchTab('detailed')">Detailed Analysis</button>
             <button class="tab" onclick="switchTab('clusters')">Cluster Analysis</button>
+            ${findings.length > 0 ? '<button class="tab" onclick="switchTab(\'observers\')">Observers</button>' : ''}
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
         </div>
 
@@ -1628,6 +1640,54 @@ export function generateHTMLReport(
               )
               .join('')}
         </div>
+
+        ${
+          findings.length > 0
+            ? `
+        <div id="observers-content" class="tab-content">
+            <h2>Observer Independence</h2>
+            <p style="margin-bottom: 20px;">
+                ${findings.length} finding${findings.length === 1 ? '' : 's'} from on-chain observation
+                accounts. Similarity findings are capped at <strong>medium</strong> severity until the
+                threshold is calibrated — see <code>yarn observers:calibrate</code>.
+            </p>
+            <table id="observersTable">
+                <thead>
+                    <tr>
+                        <th>Kind</th>
+                        <th>Epoch</th>
+                        <th>Severity</th>
+                        <th>Confidence</th>
+                        <th>Observers</th>
+                        <th>Summary</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${findings
+                      .map(
+                        (finding) => `
+                    <tr>
+                        <td>${escapeHtmlText(finding.kind.replace(/_/g, ' '))}</td>
+                        <td>${finding.epochIndex === null ? 'all' : escapeHtmlText(finding.epochIndex)}</td>
+                        <td><span class="score-badge ${
+                          finding.severity === 'high'
+                            ? 'score-high'
+                            : finding.severity === 'medium'
+                              ? 'score-medium'
+                              : 'score-low'
+                        }">${escapeHtmlText(finding.severity)}</span></td>
+                        <td>${finding.confidence.toFixed(2)}</td>
+                        <td title="${escapeHtmlText(finding.observers.join(', '))}">${finding.observers.length}</td>
+                        <td>${escapeHtmlText(finding.summary)}</td>
+                    </tr>`
+                      )
+                      .join('')}
+                </tbody>
+            </table>
+        </div>
+        `
+            : ''
+        }
 
         ${
           summary.economicImpact

@@ -3,21 +3,28 @@
  */
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
+import { safeHost } from '../utils/runtime.js';
 
-async function initSolanaArio() {
+/**
+ * Build the SDK client.
+ *
+ * `SOLANA_RPC_URL` may carry a provider token, so the URL is read here and
+ * never returned or logged — callers get the client and, at most, the host.
+ */
+export async function initSolanaArio() {
   const { ARIO, MAINNET_RPC_URL } = await import('@ar.io/sdk');
   const { createSolanaRpc } = await import('@solana/kit');
   const rpcUrl = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL;
   const rpc = createSolanaRpc(rpcUrl);
-  return { ario: ARIO.init({ rpc }), rpcUrl };
+  return { ario: ARIO.init({ rpc }), rpc, host: safeHost(rpcUrl) };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise<{ gateways: Gateway[], totalFetched: number }> {
   try {
-    const { ario, rpcUrl } = await initSolanaArio();
-    console.log(`Fetching all gateways from AR.IO Solana network (rpc: ${rpcUrl})...`);
+    const { ario, host } = await initSolanaArio();
+    console.log(`Fetching all gateways from AR.IO Solana network (rpc host: ${host})...`);
     const pageDelayMs = parseInt(process.env.SOLANA_PAGE_DELAY_MS || '500');
 
     const gateways: Gateway[] = [];

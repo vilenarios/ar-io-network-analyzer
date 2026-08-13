@@ -21,7 +21,16 @@
     "build": "tsc",
     "clean": "rimraf dist *.csv *.json",
     "format": "prettier --write \"src/**/*.ts\"",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "capture": "tsx src/capture/daemon.ts",
+    "capture:once": "tsx src/capture/daemon.ts --once",
+    "capture:status": "tsx src/capture/daemon.ts --status",
+    "observers:findings": "tsx src/observers/run-findings.ts",
+    "observers:calibrate": "tsx src/observers/calibrate.ts",
+    "observers:backfill": "tsx src/observers/run-findings.ts --all-epochs",
+    "serve": "tsx src/server/index.ts",
+    "db:migrate": "tsx src/db/migrations.ts --apply",
+    "db:stats": "tsx src/db/migrations.ts --stats"
   },
   "keywords": [
     "ar.io",
@@ -34,9 +43,11 @@
   "license": "MIT",
   "dependencies": {
     "@ar.io/sdk": "4.0.2",
-    "@solana/kit": "^6.8.0"
+    "@solana/kit": "^6.8.0",
+    "better-sqlite3": "^11.5.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.11.0",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
@@ -47,6 +58,6 @@
     "typescript": "^5.3.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.9.0"
   }
 }
