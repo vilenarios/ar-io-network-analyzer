@@ -3,7 +3,7 @@
  */
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
-import { safeHost } from '../utils/runtime.js';
+import { safeHost, scrubSecrets } from '../utils/runtime.js';
 
 /**
  * Build the SDK client.
@@ -52,7 +52,10 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
           attempt++;
           if (attempt > 5) throw err;
           const backoff = Math.min(8000, 1000 * 2 ** attempt);
-          console.log(`  Retry ${attempt}/5 in ${backoff}ms (${(err as Error).message?.slice(0, 80)})`);
+          // scrubSecrets, not `.message`: a malformed SOLANA_RPC_URL (a pasted
+          // provider URL missing its scheme is the common case) makes fetch
+          // throw with the whole URL — token included — inside the message.
+          console.log(`  Retry ${attempt}/5 in ${backoff}ms (${scrubSecrets(err).slice(0, 120)})`);
           await sleep(backoff);
         }
       }
@@ -89,7 +92,9 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
     return { gateways, totalFetched };
 
   } catch (error) {
-    console.error('Error fetching from AR.IO network:', error);
+    // Never the raw error: its message, and its `cause` chain, routinely echo
+    // the endpoint URL and therefore the provider token.
+    console.error('Error fetching from AR.IO network:', scrubSecrets(error));
     throw new Error('Failed to fetch gateways from network. Please ensure @ar.io/sdk is installed.');
   }
 }
@@ -126,7 +131,7 @@ export async function fetchDistributions(epochIndex?: number): Promise<{ rewards
     
     return distributions as any;
   } catch (error) {
-    console.error('Error fetching distributions:', error);
+    console.error('Error fetching distributions:', scrubSecrets(error));
     return null;
   }
 }

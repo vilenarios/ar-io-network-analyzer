@@ -6,6 +6,7 @@
  */
 
 import type { Database } from 'better-sqlite3';
+import { isUnhealthyStatus } from '../capture/status.js';
 import type {
   EpochSnapshot,
   Finding,
@@ -68,7 +69,10 @@ export interface EpochListEntry {
   distinctReportTxIds: number;
   firstSubmittedAtUnix: number;
   lastSubmittedAtUnix: number;
+  /** An in-epoch snapshot exists — the only kind that makes bitmaps decodable. */
   registryCaptured: boolean;
+  /** A snapshot exists but was taken after the epoch closed (approximate). */
+  registryApproximate: boolean;
 }
 
 /** Every epoch we hold observations for, ascending. */
@@ -83,6 +87,7 @@ export function listEpochs(db: Database): EpochListEntry[] {
         first_submitted: number;
         last_submitted: number;
         registry: number;
+        registry_in_epoch: number;
       }
     >(
       `SELECT o.epoch_index,
@@ -90,7 +95,9 @@ export function listEpochs(db: Database): EpochListEntry[] {
               COUNT(DISTINCT o.report_tx_id) AS distinct_reports,
               MIN(o.submitted_at) AS first_submitted,
               MAX(o.submitted_at) AS last_submitted,
-              (SELECT COUNT(*) FROM registry_snapshots r WHERE r.epoch_index = o.epoch_index) AS registry
+              (SELECT COUNT(*) FROM registry_snapshots r WHERE r.epoch_index = o.epoch_index) AS registry,
+              (SELECT COUNT(*) FROM registry_snapshots r
+                WHERE r.epoch_index = o.epoch_index AND r.in_epoch = 1) AS registry_in_epoch
          FROM observations o
         GROUP BY o.epoch_index
         ORDER BY o.epoch_index ASC`
@@ -103,7 +110,8 @@ export function listEpochs(db: Database): EpochListEntry[] {
     distinctReportTxIds: r.distinct_reports,
     firstSubmittedAtUnix: r.first_submitted,
     lastSubmittedAtUnix: r.last_submitted,
-    registryCaptured: r.registry > 0,
+    registryCaptured: r.registry_in_epoch > 0,
+    registryApproximate: r.registry > 0 && r.registry_in_epoch === 0,
   }));
 }
 
@@ -118,6 +126,7 @@ export function getRegistrySnapshot(db: Database, epochIndex: number): RegistryS
         captured_at_slot: number;
         registry_pubkey: string;
         digest: string;
+        in_epoch: number;
       }
     >(`SELECT * FROM registry_snapshots WHERE epoch_index = ?`)
     .get(epochIndex);
@@ -138,6 +147,7 @@ export function getRegistrySnapshot(db: Database, epochIndex: number): RegistryS
     registryPubkey: meta.registry_pubkey,
     digest: meta.digest,
     slots,
+    inEpoch: meta.in_epoch === 1,
   };
 }
 
@@ -215,7 +225,12 @@ export function latestPollRun(db: Database): PollRunSummary | null {
   };
 }
 
-/** How many completed runs in a row failed, counting back from the newest. */
+/**
+ * How many completed runs in a row were UNHEALTHY, counting back from the
+ * newest — `failed` (the cycle threw) and `anomaly` (the cycle completed but
+ * captured nothing usable) both count. Counting only `failed` is what let a
+ * total capture blackout report zero failures on /healthz.
+ */
 export function consecutiveFailedPollRuns(db: Database): number {
   const rows = db
     .prepare<
@@ -226,7 +241,7 @@ export function consecutiveFailedPollRuns(db: Database): number {
 
   let count = 0;
   for (const row of rows) {
-    if (row.status === 'failed') count++;
+    if (isUnhealthyStatus(row.status)) count++;
     else break;
   }
   return count;
@@ -292,6 +307,18 @@ export function upsertFindings(
     const deleteEpoch = db.prepare('DELETE FROM findings WHERE epoch_index = ?');
     for (const epochIndex of scopeEpochIndexes) deleteEpoch.run(epochIndex);
     if (includeCrossEpoch) db.prepare('DELETE FROM findings WHERE epoch_index IS NULL').run();
+
+    // Retention. Findings for epochs that have fallen out of the rolling
+    // window are never recomputed and never published, so they would grow
+    // without bound — `unmatched_observer` alone emits one row per unmatched
+    // observer per epoch. They are pure derived data: recomputable at any time
+    // with `yarn observers:backfill`.
+    if (includeCrossEpoch && scopeEpochIndexes.length > 0) {
+      const oldest = Math.min(...scopeEpochIndexes);
+      db.prepare('DELETE FROM findings WHERE epoch_index IS NOT NULL AND epoch_index < ?').run(
+        oldest
+      );
+    }
 
     const insertFinding = db.prepare(
       `INSERT INTO findings (
@@ -380,16 +407,26 @@ export function listFindings(db: Database, options: ListFindingsOptions = {}): S
     )
     .all(...params);
 
+  // Fetch observers for exactly the findings we are returning. Reading the
+  // whole join table ignored both the filter and the limit, and this runs on
+  // every daily publish.
   const observersById = new Map<string, string[]>();
-  for (const row of db
-    .prepare<
-      [],
-      { finding_id: string; observer: string }
-    >('SELECT finding_id, observer FROM finding_observers ORDER BY observer ASC')
-    .all()) {
-    const list = observersById.get(row.finding_id) ?? [];
-    list.push(row.observer);
-    observersById.set(row.finding_id, list);
+  const ids = rows.map((row) => row.id);
+  const CHUNK = 400; // well inside SQLITE_MAX_VARIABLE_NUMBER
+
+  for (let offset = 0; offset < ids.length; offset += CHUNK) {
+    const chunk = ids.slice(offset, offset + CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    for (const row of db
+      .prepare<string[], { finding_id: string; observer: string }>(
+        `SELECT finding_id, observer FROM finding_observers
+          WHERE finding_id IN (${placeholders}) ORDER BY observer ASC`
+      )
+      .all(...chunk)) {
+      const list = observersById.get(row.finding_id) ?? [];
+      list.push(row.observer);
+      observersById.set(row.finding_id, list);
+    }
   }
 
   return rows.map((row) => ({

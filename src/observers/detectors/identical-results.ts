@@ -30,6 +30,14 @@ export const identicalResultsDetector: Detector = {
 
       const gatewayCounts = [...new Set(observations.map((o) => o.gatewayCount))];
 
+      // Zero comparable bytes is not "identical", it is "no evidence". Decode
+      // already refuses an out-of-range gatewayCount, so this is defence in
+      // depth for rows written before that guard existed: without it every
+      // such blob hashes to the digest of an empty buffer and this detector —
+      // the one that emits severity `high` at confidence 1.0 — groups them all.
+      const comparedBytes = meaningfulBytes(Math.min(...gatewayCounts));
+      if (comparedBytes === 0) continue;
+
       findings.push(
         makeFinding({
           kind: 'identical_results',
@@ -44,7 +52,7 @@ export const identicalResultsDetector: Detector = {
             maskedDigest: digest,
             observerCount: observations.length,
             gatewayCount: gatewayCounts.length === 1 ? gatewayCounts[0] : gatewayCounts,
-            meaningfulBytes: meaningfulBytes(Math.min(...gatewayCounts)),
+            meaningfulBytes: comparedBytes,
             blobBytes: observations[0].gatewayResults.length,
             reportTxIds: [...new Set(observations.map((o) => o.reportTxId))],
             submittedAtUnix: observations.map((o) => o.submittedAt).sort((a, b) => a - b),

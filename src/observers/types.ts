@@ -39,6 +39,13 @@ export interface RegistrySnapshot {
   digest: string;
   registryPubkey: string;
   slots: string[]; // slots[i] = gateway address at bit index i
+  /**
+   * true when the snapshot was taken while this epoch was still the live one.
+   * false means it is the CURRENT slot order labelled with a past epoch — an
+   * approximation, because any gateway that joined or left since shifts every
+   * slot after it. Only an in-epoch snapshot makes a bitmap decodable.
+   */
+  inEpoch: boolean;
 }
 
 export interface EpochSnapshot {
@@ -47,7 +54,8 @@ export interface EpochSnapshot {
   distinctReportTxIds: number;
   firstSubmittedAtUnix: number;
   lastSubmittedAtUnix: number;
-  registry: RegistrySnapshot | null; // null => bitmaps not yet decodable for this epoch
+  /** null => no slot order captured; `inEpoch: false` => approximate only. */
+  registry: RegistrySnapshot | null;
 }
 
 export type FindingKind =

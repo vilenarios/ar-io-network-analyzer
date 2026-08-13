@@ -26,15 +26,9 @@ import {
 } from './detectors/index.js';
 import { buildEpochDocument, buildFindingsDocument, buildObserversDocument } from './documents.js';
 import { capSeverity, makeFinding } from './finding.js';
-import { publishDocuments, readPublishedDocument } from '../publish/publish.js';
-import type { GatewaysDocument } from '../publish/contract.js';
-import type {
-  DetectorConfig,
-  DetectorContext,
-  EpochSnapshot,
-  Finding,
-  GatewayFacts,
-} from './types.js';
+import { publishDocuments } from '../publish/publish.js';
+import { loadGatewayRoster } from './roster.js';
+import type { DetectorConfig, DetectorContext, EpochSnapshot, Finding } from './types.js';
 
 const DEFAULT_SIMILARITY_THRESHOLD = 0.9; // UNCALIBRATED PLACEHOLDER — see §5
 const DEFAULT_WINDOW_EPOCHS = 30;
@@ -42,7 +36,6 @@ const DEFAULT_CO_SUBMISSION_WINDOW_S = 60;
 const DEFAULT_SHARED_ASN_MIN_OBSERVERS = 4;
 const DEFAULT_PERSISTENT_MIN_EPOCHS = 3;
 const DEFAULT_COMPOSITE_MIN_KINDS = 2;
-const DEFAULT_ANALYSIS_MAX_AGE_SECONDS = 172_800;
 
 /** Confidence multiplier applied when the gateway roster is missing or stale. */
 const DEGRADED_CONFIDENCE_FACTOR = 0.6;
@@ -50,54 +43,6 @@ const DEGRADED_CONFIDENCE_FACTOR = 0.6;
 function envNumber(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
-}
-
-interface GatewayRoster {
-  gateways: Map<string, GatewayFacts>;
-  snapshotAt: string | null;
-  degraded: boolean;
-}
-
-/**
- * Load the roster from the published `gateways.json`. Never resolves DNS:
- * a missing or stale roster degrades the infrastructure detectors instead.
- */
-function loadGatewayRoster(): GatewayRoster {
-  const document = readPublishedDocument<GatewaysDocument>('api/v1/gateways.json');
-  if (!document) {
-    console.warn('⚠️  no published gateways.json — infrastructure detectors run degraded');
-    return { gateways: new Map(), snapshotAt: null, degraded: true };
-  }
-
-  const ageSeconds = (Date.now() - Date.parse(document.generatedAt)) / 1000;
-  const maxAge = envNumber('ANALYSIS_MAX_AGE_SECONDS', DEFAULT_ANALYSIS_MAX_AGE_SECONDS);
-  const degraded = !Number.isFinite(ageSeconds) || ageSeconds > maxAge;
-
-  if (degraded) {
-    console.warn(
-      `⚠️  gateways.json is ${Math.round(ageSeconds / 3600)}h old — infrastructure detectors run degraded`
-    );
-  }
-
-  const gateways = new Map<string, GatewayFacts>();
-  for (const entry of document.gateways) {
-    gateways.set(entry.wallet, {
-      wallet: entry.wallet,
-      fqdn: entry.fqdn,
-      ipAddress: entry.ipAddress,
-      ipRange: entry.ipRange,
-      asn: entry.asn,
-      asnOrg: entry.asnOrg,
-      baseDomain: entry.baseDomain,
-      clusterKey: entry.clusterKey,
-      clusterKind: entry.clusterKind,
-      clusterSize: entry.clusterSize,
-      stake: entry.stake,
-      overallCentralization: entry.scores.overall,
-    });
-  }
-
-  return { gateways, snapshotAt: document.generatedAt, degraded };
 }
 
 function buildConfig(calibrationId: number | null, threshold: number): DetectorConfig {

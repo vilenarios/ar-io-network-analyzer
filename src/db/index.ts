@@ -1,10 +1,18 @@
 /**
- * SQLite handles for the three processes that share `data/observations.sqlite`.
+ * SQLite handles for the processes that share `data/observations.sqlite`.
  *
- * Table ownership is disjoint by writer (capture owns the chain tables, the
- * analysis cadence owns the derived tables, the server opens read-only), so
- * WAL plus a 5s busy timeout is sufficient — there is no cross-process write
- * contention by construction.
+ * Table ownership is disjoint by writer — capture owns the chain tables, the
+ * findings cadence owns the derived tables, the daily analysis owns
+ * `analysis_runs`, the server opens read-only — but that buys nothing for
+ * concurrency: **SQLite serialises writers per FILE, not per table.** Four
+ * writers really do contend, and the 10-minute capture and 10-minute findings
+ * cadences are designed to run at the same period.
+ *
+ * What actually holds the system together is therefore: WAL (readers never
+ * block the writer), a generous busy timeout, and — most importantly — the
+ * fact that every database write on the capture cycle path is wrapped, so
+ * losing the race costs one bookkeeping row rather than the daemon. See
+ * `safeWrite` in capture/daemon.ts.
  */
 
 import BetterSqlite3 from 'better-sqlite3';
@@ -34,8 +42,12 @@ export function openWriter(): Database {
 
   const db = new BetterSqlite3(path);
   db.pragma('journal_mode = WAL');
+  // FULL, not NORMAL: an observation that cannot be re-fetched is worth more
+  // than the fsync it costs. /data is frequently a spinning disk.
   db.pragma('synchronous = FULL');
-  db.pragma('busy_timeout = 5000');
+  // Generous, because writers genuinely contend for this file and the
+  // alternative to waiting is dropping a sample that no longer exists on chain.
+  db.pragma('busy_timeout = 15000');
   db.pragma('foreign_keys = ON');
 
   applyMigrations(db);

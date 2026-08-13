@@ -16,6 +16,7 @@ import type {
   InfrastructureImpact,
 } from '../types.js';
 import { DNS_FAILURE_SENTINEL, IP_RANGE_UNKNOWN_SENTINEL } from '../utils/dns.js';
+import { DOMAIN_CLUSTER_PREFIX, IP_EXACT_CLUSTER_PREFIX } from '../analyzer-constants.js';
 import type {
   Finding,
   GatewayObserverSummary,
@@ -157,6 +158,7 @@ export interface ObserversDocument {
     observationCount: number;
     distinctReportTxIds: number;
     registryCaptured: boolean;
+    registryApproximate: boolean;
     findingCount: number;
     firstSubmittedAtUnix: number;
     lastSubmittedAtUnix: number;
@@ -169,7 +171,13 @@ export interface EpochDocument {
   epochIndex: number;
   observationCount: number;
   distinctReportTxIds: number;
+  /**
+   * true only when the registry slot order was snapshotted while this epoch
+   * was live. false with `registryApproximate: true` means a snapshot exists
+   * but was taken later, so bit i of a result blob may not name slot i.
+   */
   registryCaptured: boolean;
+  registryApproximate: boolean;
   registryDigest: string | null;
   firstSubmittedAtUnix: number;
   lastSubmittedAtUnix: number;
@@ -250,16 +258,16 @@ export function clusterKey(
   /** fqdn -> resolved IP, so an exact-IP cluster can name its address. */
   ipByFqdn?: Map<string, string | null>
 ): string {
-  if (cluster.id.startsWith('ip-exact')) {
+  if (cluster.id.startsWith(IP_EXACT_CLUSTER_PREFIX)) {
     // The analyzer names exact-IP clusters `ip-exact-<n>`, which is a per-run
     // sequence; the stable identity is the shared address. Falling back to the
     // run-local id keeps the two documents joinable when no rows are supplied.
     const ip = cluster.gateways
       .map((fqdn) => ipByFqdn?.get(fqdn) ?? null)
       .find((value): value is string => value !== null);
-    return `ip-exact:${ip ?? cluster.id}`;
+    return `${IP_EXACT_CLUSTER_PREFIX}:${ip ?? cluster.id}`;
   }
-  return `domain:${cluster.baseDomain}`;
+  return `${DOMAIN_CLUSTER_PREFIX}:${cluster.baseDomain}`;
 }
 
 /** The same identity, derived from a single gateway row. */
@@ -267,11 +275,11 @@ export function clusterKeyForGateway(
   gateway: GatewayAnalysis
 ): { key: string; kind: 'domain' | 'ip-exact' } | null {
   if (!gateway.clusterId) return null;
-  if (gateway.clusterId.startsWith('ip-exact')) {
+  if (gateway.clusterId.startsWith(IP_EXACT_CLUSTER_PREFIX)) {
     const ip = normalizeSentinels(gateway.ipAddress);
-    return ip ? { key: `ip-exact:${ip}`, kind: 'ip-exact' } : null;
+    return ip ? { key: `${IP_EXACT_CLUSTER_PREFIX}:${ip}`, kind: 'ip-exact' } : null;
   }
-  return { key: `domain:${gateway.baseDomain}`, kind: 'domain' };
+  return { key: `${DOMAIN_CLUSTER_PREFIX}:${gateway.baseDomain}`, kind: 'domain' };
 }
 
 export function toNetworkDocument(

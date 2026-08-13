@@ -8,6 +8,7 @@ Network Centralization Analyzers for the Arweave ecosystem:
 
 1. **AR.IO Gateway Analyzer** - Detects centralization patterns in AR.IO gateways using domain, geographic, network, and stake analysis
 2. **Arweave Node Analyzer** - Analyzes the Arweave base layer node network via peer graph crawling and infrastructure analysis
+3. **Observer Independence Indexer** - Continuously captures on-chain `Observation` accounts and detects observers that are not independent (`src/capture`, `src/observers`, `src/publish`, `src/server`, `src/db`)
 
 ## Key Commands
 
@@ -22,9 +23,20 @@ Network Centralization Analyzers for the Arweave ecosystem:
 - `npm run analyze:arweave` - Crawl and analyze Arweave node network
 - `npm run analyze:arweave:demo` - Run with demo data for testing
 
+### Observer Independence Indexer
+
+- `yarn capture` - Capture daemon (10-minute poll). **Must run continuously.**
+- `yarn capture:once` / `yarn capture:status` - One cycle / read-only health summary
+- `yarn observers:findings` - Recompute + publish findings (never touches the network)
+- `yarn observers:backfill` - Same, over every captured epoch
+- `yarn observers:calibrate [--activate <id> [--force]]` - Measure / promote the similarity threshold
+- `yarn serve` - Read-only HTTP server over `public/`
+- `yarn db:migrate` / `yarn db:stats` - Apply migrations / table counts
+
 ### Development
 
 - `npm install` - Install dependencies
+- `yarn test` - Unit tests (`node:test` via tsx, in `test/`). No network access.
 - `npm run build` - Build TypeScript to JavaScript
 - `npm run lint` - Run ESLint
 - `npm run format` - Format code with Prettier
@@ -60,7 +72,8 @@ Network Centralization Analyzers for the Arweave ecosystem:
 
 - **ESM project**: `"type": "module"` in package.json — use `import`/`export`, not `require`
 - **Runtime**: Scripts run via `tsx` (TypeScript execution without compilation). `npm run build` compiles to `dist/` but is not needed for development
-- **No test framework**: No unit tests exist; validation is done by running analyzers with `USE_DEMO_DATA=true`
+- **Tests**: `node:test` via tsx (`yarn test`, files in `test/`). They use in-memory SQLite and synthetic fixtures and must NEVER contact an RPC endpoint — the capture path is exercised through `useSdkDecoder()`. The two legacy analyzers still have no tests; validate those with `USE_DEMO_DATA=true`.
+- **Node 20.9+ required**: `better-sqlite3` prebuilds are ABI-specific. Every entry point calls `assertNodeVersion()` before touching the native module so an old runtime produces a readable message, not a loader error.
 - **Reports are gitignored**: Output goes to `reports/` directory which is in `.gitignore`
 - **Code style**: Prettier (single quotes, 100 char width, trailing commas es5, 2-space indent) and ESLint (`@typescript-eslint/no-explicit-any` is warn-only, unused vars error with `_` prefix exception)
 
@@ -181,8 +194,82 @@ Key flags added to `suspicionNotes` array:
 
 ---
 
+---
+
+## Observer Independence Indexer (`src/capture`, `src/observers`, `src/publish`, `src/server`, `src/db`)
+
+Three processes share one SQLite file and one published directory. Full contract
+in `docs/observer-independence.md`; operations in `docs/operations.md`.
+
+| Process | Entry point | Cadence | Network |
+|---|---|---|---|
+| Capture | `src/capture/daemon.ts` | 10 min | 1 `getProgramAccounts` per cycle; hourly canary; ~1 `getAccountInfo`/day |
+| Findings | `src/observers/run-findings.ts` | 10 min | **none** |
+| Analysis | `src/index.ts` (`yarn analyze`) | daily | SDK + DNS + geo |
+| Server | `src/server/index.ts` | always | serves `public/` read-only |
+
+### Load-bearing facts (do not re-derive these)
+
+- **`close_observation` is permissionless.** Observation accounts are deleted
+  from the chain within days. Anything not captured while live is gone
+  permanently — there is no backfill, ever. Every design decision in
+  `src/capture` follows from this: never let a cycle kill the process, never
+  report a cycle that captured nothing as success, never hold a lock a dead
+  process left behind.
+- **`reportTxId` is NOT unique.** Epoch 511: 17 observations, 11 distinct
+  reports, 7 observers sharing one. The primary key is
+  `(epoch_index, observer)`. Anything keyed on the report id collapses seven
+  rows into one.
+- **`gatewayResults` is OPAQUE.** 375 bytes whose bit encoding has not been
+  verified end-to-end. It is compared as bytes, published verbatim as base64
+  with `gatewayResultsMeaningfulBytes`, and never decoded into per-gateway
+  verdicts. Every v1 detector sets `requiresDecodedResults: false`. A detector
+  that needs the bits also needs `registryCaptured: true` for that epoch.
+- **Only the first `ceil(gatewayCount/8)` bytes mean anything** (81 of 375 at
+  `gatewayCount = 643`), and the final partial byte must be masked to its low
+  `gatewayCount % 8` bits. Skipping either makes unrelated observers look ~78%
+  identical. See the rules at the top of `src/observers/hamming.ts`.
+- **The upsert is MONOTONIC, not just idempotent.** A read with an older
+  `submittedAt` or from an older RPC context slot is refused (`'stale'`), never
+  archived — otherwise a lagging replica overwrites newer data and the newer
+  bytes survive only in `observation_revisions`, which nothing reads.
+- **A registry snapshot is only decodable if taken in-epoch.** `getAccountInfo`
+  on the registry PDA always returns the CURRENT slot order; labelling it with a
+  past epoch is an approximation. `registry_snapshots.in_epoch` distinguishes
+  them, and only the live epoch can be upgraded.
+- **The similarity threshold is UNCALIBRATED.** At 0.90, 15 of 17 epoch-511
+  observers land in one component. Findings are capped at medium/0.5 and marked
+  `calibrated: false` until a calibration row is active, and a `NO_SEPARATION`
+  calibration cannot be activated without `--force`.
+- **`SOLANA_RPC_URL` may carry a provider token.** It is read in exactly two
+  places (`src/capture/rpc.ts`, `src/data/gateway-fetcher.ts`) and never logged,
+  stored or published — only `safeHost()` output. Every error that reaches a
+  log or the database goes through `scrubSecrets()`.
+
+### Where things live (do not duplicate them)
+
+- One roster mapping: `src/observers/roster.ts` (`gateways.json` → `GatewayFacts`).
+- One per-observer aggregation and ranking: `src/observers/rollup.ts`.
+- One DNS implementation: `src/utils/dns.ts` (used only by the daily analysis).
+- One cycle classifier: `src/capture/status.ts`.
+- `src/publish/` writes `public/` and nothing else — no queries, no rollups.
+
+### Gotchas
+
+- SQLite serialises writers per **file**, not per table. Four processes write
+  this file; the "disjoint tables" argument does not apply. Every DB write on
+  the capture cycle path is wrapped so `SQLITE_BUSY` cannot kill the daemon.
+- `src/arweave/*` is a separate track. Do not touch it. It is lint-warn-only in
+  `.eslintrc.json` for exactly that reason.
+- The HTML report is now SERVED, not just written to `reports/` — so
+  interpolations are escaped (`esc()`) and script payloads go through
+  `jsonForScript()`. `isp`/`org`/`city` come from a plaintext-HTTP geo lookup
+  and `fqdn` comes from on-chain settings; both are attacker-influenced.
+
 ## Dependencies
 
 - `@ar.io/sdk` - AR.IO network SDK for gateway data
+- `@solana/kit` - Solana RPC client
+- `better-sqlite3` - the observation store (native module; ABI-specific prebuilds)
 - TypeScript 5.3+ with ES2022 target
-- Node.js 18+ required
+- Node.js 20.9+ required

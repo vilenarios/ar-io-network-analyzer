@@ -68,5 +68,10 @@ export async function fetchRegistrySlotOrder(
     registryPubkey: registryPubkey as unknown as string,
     digest: createHash('sha256').update(slots.join('')).digest('hex'),
     slots,
+    // The caller decides: this fetch always returns the CURRENT slot order, so
+    // it is only in-epoch when `epochIndex` is the live epoch. Defaulting to
+    // false means a caller that forgets understates decodability rather than
+    // publishing a slot order that may not match the bitmaps.
+    inEpoch: false,
   };
 }

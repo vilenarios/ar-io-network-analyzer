@@ -9,18 +9,49 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { existsSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { assertNodeVersion } from '../utils/runtime.js';
 import { tryOpenReader } from '../db/index.js';
 import { consecutiveFailedPollRuns, latestAnalysisRun, latestPollRun } from '../db/repo-read.js';
+import { isHealthyStatus } from '../capture/status.js';
 import type { Manifest } from '../publish/contract.js';
-import { DATE_PATTERN, EPOCH_PATTERN, cacheControlFor, readFile, resolveWithin } from './static.js';
+import {
+  ARCHIVE_FILE_PATTERN,
+  DATE_PATTERN,
+  EPOCH_PATTERN,
+  cacheControlFor,
+  readFile,
+  resolveWithin,
+} from './static.js';
 
 const DEFAULT_PORT = 8787;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_CAPTURE_MAX_AGE_SECONDS = 3_600;
 const DEFAULT_ANALYSIS_MAX_AGE_SECONDS = 172_800;
+/** /healthz opens a SQLite connection; it is unauthenticated, so cache it. */
+const HEALTH_CACHE_MS = 5_000;
+
+/**
+ * Sent on every response.
+ *
+ * `nosniff` is unconditional because the 404 bodies echo the request path, and
+ * a sniffing browser is the difference between an inert JSON string and an
+ * interpreted document. The report is a single self-contained page with inline
+ * scripts, so the CSP cannot forbid inline script — but it can forbid
+ * everything the page never needs (remote script, objects, framing, a
+ * rewritten base URI), which is what an injected payload would reach for.
+ */
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
+
+const HTML_CSP =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; " +
+  "form-action 'none'; frame-ancestors 'none'";
 
 function publicDir(): string {
   return process.env.PUBLIC_DIR || 'public';
@@ -34,6 +65,7 @@ function envSeconds(name: string, fallback: number): number {
 function sendJson(res: ServerResponse, status: number, body: unknown, cacheControl = 'no-store') {
   const json = JSON.stringify(body, null, 2);
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(json),
     'Cache-Control': cacheControl,
@@ -44,6 +76,8 @@ function sendJson(res: ServerResponse, status: number, body: unknown, cacheContr
 
 function sendHtml(res: ServerResponse, status: number, body: string) {
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Security-Policy': HTML_CSP,
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': Buffer.byteLength(body),
     'Cache-Control': 'no-store',
@@ -51,14 +85,44 @@ function sendHtml(res: ServerResponse, status: number, body: string) {
   res.end(body);
 }
 
-/** Digests from the manifest, reused as ETags so nothing is hashed twice. */
-function manifestEtags(): Map<string, string> {
-  const etags = new Map<string, string>();
-  const manifestPath = join(publicDir(), 'api/v1/index.json');
-  if (!existsSync(manifestPath)) return etags;
+interface ManifestCache {
+  mtimeMs: number;
+  size: number;
+  etags: Map<string, string>;
+}
 
+let manifestCache: ManifestCache | null = null;
+
+/**
+ * Digests from the manifest, reused as ETags so nothing is hashed twice.
+ *
+ * Memoized on (mtime, size): the manifest grows by one entry per epoch forever
+ * and is the document a portal polls every 60 seconds, so re-reading and
+ * re-parsing it per request put unbounded synchronous disk I/O on the event
+ * loop for an unauthenticated caller.
+ */
+function manifestEtags(): Map<string, string> {
+  const manifestPath = join(publicDir(), 'api/v1/index.json');
+  if (!existsSync(manifestPath)) {
+    manifestCache = null;
+    return new Map();
+  }
+
+  let stat;
   try {
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Manifest;
+    stat = statSync(manifestPath);
+  } catch {
+    return manifestCache?.etags ?? new Map();
+  }
+
+  if (manifestCache && manifestCache.mtimeMs === stat.mtimeMs && manifestCache.size === stat.size) {
+    return manifestCache.etags;
+  }
+
+  const etags = new Map<string, string>();
+  try {
+    const raw = readFileSync(manifestPath);
+    const manifest = JSON.parse(raw.toString('utf8')) as Manifest;
     for (const entry of Object.values(manifest.documents)) {
       if (!entry) continue;
       if (Array.isArray(entry)) {
@@ -67,10 +131,28 @@ function manifestEtags(): Map<string, string> {
         etags.set(entry.path, entry.sha256);
       }
     }
+    // The manifest cannot carry its own digest (it would have to contain a
+    // hash of itself), and it is the most-polled document of the set — so it
+    // is the one that would fall back to a weak mtime ETag. Hash it here,
+    // once per publish rather than once per request.
+    etags.set('/api/v1/index.json', createHash('sha256').update(raw).digest('hex'));
   } catch {
     // A corrupt manifest costs us ETags, not availability.
   }
+
+  manifestCache = { mtimeMs: stat.mtimeMs, size: stat.size, etags };
   return etags;
+}
+
+let healthCache: { at: number; value: { status: number; body: Record<string, unknown> } } | null =
+  null;
+
+/** Cached wrapper: /healthz is unauthenticated and opens a SQLite handle. */
+function healthzCached(): { status: number; body: Record<string, unknown> } {
+  if (healthCache && Date.now() - healthCache.at < HEALTH_CACHE_MS) return healthCache.value;
+  const value = healthz();
+  healthCache = { at: Date.now(), value };
+  return value;
 }
 
 function healthz(): { status: number; body: Record<string, unknown> } {
@@ -120,7 +202,11 @@ function healthz(): { status: number; body: Record<string, unknown> } {
     }
   }
 
-  const degraded = !published || capture.stale === true;
+  // A cycle that completed but captured nothing is recorded as `anomaly`, not
+  // `ok`; treating anything other than a healthy status as fine is exactly how
+  // a total capture blackout would keep a green light here.
+  const degraded =
+    !published || capture.stale === true || !isHealthyStatus(String(capture.status ?? ''));
   return {
     status: 200,
     body: {
@@ -135,7 +221,7 @@ function healthz(): { status: number; body: Record<string, unknown> } {
 }
 
 /** Map a request path to a file under `public/`, or null when it is not a route. */
-function routeToFile(pathname: string): string | null {
+export function routeToFile(pathname: string): string | null {
   if (pathname === '/' || pathname === '/index.html') return 'index.html';
 
   const epochMatch = /^\/api\/v1\/epochs\/([^/]+)\.json$/.exec(pathname);
@@ -147,6 +233,10 @@ function routeToFile(pathname: string): string | null {
   if (archiveMatch) {
     if (!DATE_PATTERN.test(archiveMatch[1])) return null;
     const rest = archiveMatch[2] === '' ? 'index.html' : archiveMatch[2];
+    // The publisher writes exactly three files per archive date. An unbounded
+    // `(.*)` served whatever else happened to be in the directory, with an
+    // octet-stream fallback; containment held but least privilege did not.
+    if (!ARCHIVE_FILE_PATTERN.test(rest)) return null;
     return `archive/${archiveMatch[1]}/${rest}`;
   }
 
@@ -163,13 +253,17 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   const isApi = pathname.startsWith('/api/');
 
   if (method !== 'GET' && method !== 'HEAD') {
-    res.writeHead(405, { Allow: 'GET, HEAD', 'Content-Type': 'application/json' });
+    res.writeHead(405, {
+      ...SECURITY_HEADERS,
+      Allow: 'GET, HEAD',
+      'Content-Type': 'application/json',
+    });
     res.end(JSON.stringify({ error: 'method_not_allowed' }));
     return;
   }
 
   if (pathname === '/healthz') {
-    const { status, body } = healthz();
+    const { status, body } = healthzCached();
     sendJson(res, status, body);
     return;
   }
@@ -204,17 +298,20 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   }
 
   const headers: Record<string, string> = {
+    ...SECURITY_HEADERS,
     'Content-Type': file.contentType,
     'Content-Length': String(file.bytes.length),
     'Cache-Control': cacheControlFor(pathname),
     ETag: file.etag,
     Vary: 'Accept-Encoding',
   };
+  if (file.contentType.startsWith('text/html')) headers['Content-Security-Policy'] = HTML_CSP;
   if (file.gzipped) headers['Content-Encoding'] = 'gzip';
   if (isApi) headers['Access-Control-Allow-Origin'] = '*';
 
   if (req.headers['if-none-match'] === file.etag) {
     res.writeHead(304, {
+      ...SECURITY_HEADERS,
       ETag: file.etag,
       'Cache-Control': headers['Cache-Control'],
       Vary: 'Accept-Encoding',
@@ -264,4 +361,8 @@ function main(): void {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+// Only listen when run as a program; importing this module (tests do, for the
+// routing table) must not bind a port.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

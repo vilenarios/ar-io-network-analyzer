@@ -16,8 +16,8 @@ import {
   type ObserversDocument,
 } from '../publish/contract.js';
 import { meaningfulBytes } from './hamming.js';
-import { SEVERITY_ORDER } from './types.js';
-import type { DetectorConfig, EpochSnapshot, Finding, GatewayFacts, Severity } from './types.js';
+import { countFindings, rankFindings, summarizeObservers } from './rollup.js';
+import type { DetectorConfig, EpochSnapshot, Finding, GatewayFacts } from './types.js';
 
 function epochRange(epochs: EpochSnapshot[]) {
   if (epochs.length === 0) return null;
@@ -35,7 +35,8 @@ export function buildEpochDocument(epoch: EpochSnapshot, findings: Finding[]): E
     epochIndex: epoch.epochIndex,
     observationCount: epoch.observations.length,
     distinctReportTxIds: epoch.distinctReportTxIds,
-    registryCaptured: epoch.registry !== null,
+    registryCaptured: epoch.registry?.inEpoch === true,
+    registryApproximate: epoch.registry !== null && !epoch.registry.inEpoch,
     registryDigest: epoch.registry?.digest ?? null,
     firstSubmittedAtUnix: epoch.firstSubmittedAtUnix,
     lastSubmittedAtUnix: epoch.lastSubmittedAtUnix,
@@ -69,64 +70,7 @@ export function buildObserversDocument(
   findings: Finding[],
   gateways: Map<string, GatewayFacts>
 ): ObserversDocument {
-  interface Accumulator {
-    observer: string;
-    epochIndexes: number[];
-    reportTxIds: Set<string>;
-    sharedReportEpochs: Set<number>;
-    findingCount: number;
-    maxSeverity: Severity | null;
-    kinds: Set<string>;
-  }
-
-  const byObserver = new Map<string, Accumulator>();
-  const get = (observer: string): Accumulator => {
-    let entry = byObserver.get(observer);
-    if (!entry) {
-      entry = {
-        observer,
-        epochIndexes: [],
-        reportTxIds: new Set(),
-        sharedReportEpochs: new Set(),
-        findingCount: 0,
-        maxSeverity: null,
-        kinds: new Set(),
-      };
-      byObserver.set(observer, entry);
-    }
-    return entry;
-  };
-
-  for (const epoch of epochs) {
-    const reportCounts = new Map<string, number>();
-    for (const observation of epoch.observations) {
-      reportCounts.set(observation.reportTxId, (reportCounts.get(observation.reportTxId) ?? 0) + 1);
-    }
-
-    for (const observation of epoch.observations) {
-      const entry = get(observation.observer);
-      entry.epochIndexes.push(epoch.epochIndex);
-      entry.reportTxIds.add(observation.reportTxId);
-      if ((reportCounts.get(observation.reportTxId) ?? 0) > 1) {
-        entry.sharedReportEpochs.add(epoch.epochIndex);
-      }
-    }
-  }
-
-  for (const finding of findings) {
-    for (const observer of finding.observers) {
-      const entry = byObserver.get(observer);
-      if (!entry) continue;
-      entry.findingCount++;
-      entry.kinds.add(finding.kind);
-      if (
-        entry.maxSeverity === null ||
-        SEVERITY_ORDER.indexOf(finding.severity) > SEVERITY_ORDER.indexOf(entry.maxSeverity)
-      ) {
-        entry.maxSeverity = finding.severity;
-      }
-    }
-  }
+  const byObserver = summarizeObservers(epochs, findings);
 
   const findingsByEpoch = new Map<number, number>();
   for (const finding of findings) {
@@ -157,7 +101,8 @@ export function buildObserversDocument(
       epochIndex: epoch.epochIndex,
       observationCount: epoch.observations.length,
       distinctReportTxIds: epoch.distinctReportTxIds,
-      registryCaptured: epoch.registry !== null,
+      registryCaptured: epoch.registry?.inEpoch === true,
+      registryApproximate: epoch.registry !== null && !epoch.registry.inEpoch,
       findingCount: findingsByEpoch.get(epoch.epochIndex) ?? 0,
       firstSubmittedAtUnix: epoch.firstSubmittedAtUnix,
       lastSubmittedAtUnix: epoch.lastSubmittedAtUnix,
@@ -170,13 +115,7 @@ export function buildFindingsDocument(
   epochs: EpochSnapshot[],
   config: DetectorConfig
 ): FindingsDocument {
-  const bySeverity: Record<Severity, number> = { info: 0, low: 0, medium: 0, high: 0 };
-  const byKind: Record<string, number> = {};
-
-  for (const finding of findings) {
-    bySeverity[finding.severity]++;
-    byKind[finding.kind] = (byKind[finding.kind] ?? 0) + 1;
-  }
+  const { bySeverity, byKind } = countFindings(findings);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -187,14 +126,6 @@ export function buildFindingsDocument(
     thresholdSimilarity: config.similarityThreshold,
     epochRange: epochRange(epochs),
     counts: { total: findings.length, bySeverity, byKind },
-    findings: findings
-      .slice()
-      .sort(
-        (a, b) =>
-          SEVERITY_ORDER.indexOf(b.severity) - SEVERITY_ORDER.indexOf(a.severity) ||
-          b.confidence - a.confidence ||
-          (b.epochIndex ?? Number.MAX_SAFE_INTEGER) - (a.epochIndex ?? Number.MAX_SAFE_INTEGER)
-      )
-      .map(toPublishedFinding),
+    findings: rankFindings(findings).map(toPublishedFinding),
   };
 }

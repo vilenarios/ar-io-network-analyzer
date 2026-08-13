@@ -65,7 +65,7 @@ async function main() {
         error: scrubSecrets(error),
       });
     }
-    console.error('\n❌ Fatal error:', error);
+    console.error('\n❌ Fatal error:', scrubSecrets(error));
     process.exit(1);
   } finally {
     runLog?.db.close();

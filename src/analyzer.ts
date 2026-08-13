@@ -21,7 +21,9 @@ import { printSummary } from './utils/display.js';
 import { batchGeoLocation } from './utils/geo-location.js';
 import { resolveGatewayIps } from './utils/dns.js';
 import { toGatewayDocument, toNetworkDocument } from './publish/contract.js';
-import { loadObserverContext, publishDocuments } from './publish/publish.js';
+import { DOMAIN_CLUSTER_PREFIX, IP_EXACT_CLUSTER_PREFIX } from './analyzer-constants.js';
+import { publishDocuments } from './publish/publish.js';
+import { loadObserverContext } from './observers/context.js';
 
 export class GatewayCentralizationAnalyzer {
   private config: AnalyzerConfig;
@@ -528,7 +530,7 @@ export class GatewayCentralizationAnalyzer {
           return; // Skip clustering this domain
         }
 
-        const id = `domain-${clusterId++}`;
+        const id = `${DOMAIN_CLUSTER_PREFIX}-${clusterId++}`;
 
         gateways.sort((a, b) => b.stake - a.stake);
 
@@ -565,7 +567,7 @@ export class GatewayCentralizationAnalyzer {
         // Check that they're actually different domains (not already caught by domain clustering)
         const uniqueDomains = new Set(gateways.map(gw => gw.baseDomain));
         if (uniqueDomains.size >= 2) {
-          const id = `ip-exact-${clusterId++}`;
+          const id = `${IP_EXACT_CLUSTER_PREFIX}-${clusterId++}`;
           gateways.forEach((gw, idx) => {
             gw.clusterId = id;
             gw.clusterSize = gateways.length;

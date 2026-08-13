@@ -4,6 +4,7 @@ TypeScript tools for detecting and analyzing centralization patterns in the Arwe
 
 1. **AR.IO Gateway Analyzer** — Identifies clusters of AR.IO gateways that may be controlled by the same operators using domain, geographic, network, temporal, stake, and technical fingerprint analysis.
 2. **Arweave Node Analyzer** — Crawls the Arweave base layer peer network and analyzes infrastructure distribution, peer graph topology, and geographic concentration.
+3. **Observer Independence Indexer** — Continuously captures on-chain `Observation` accounts and detects observers that are not independent of one another. See below, plus [docs/observer-independence.md](docs/observer-independence.md) and [docs/operations.md](docs/operations.md).
 
 ## Installation
 
@@ -15,7 +16,7 @@ npm install
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 20.9+ (see `.nvmrc` — `better-sqlite3` ships ABI-specific prebuilds; the observer indexer refuses to start on an older runtime)
 - Network access to AR.IO gateways and/or Arweave nodes
 - (Optional) Internet access for geographic lookups via ip-api.com
 
@@ -44,7 +45,86 @@ npm run analyze:arweave
 npm run analyze:arweave:demo
 ```
 
+### Observer Independence Indexer
+
+Each epoch, AR.IO observers write an on-chain `Observation` account reporting on
+gateway performance. If several nominally independent observers are in fact one
+actor, the network's observation layer is centralized no matter how many gateway
+addresses are registered. This indexer captures those accounts and looks for
+exactly that.
+
+```bash
+yarn db:migrate            # create/migrate data/observations.sqlite
+yarn capture:once          # one capture cycle (1 RPC call), then exit
+yarn capture               # the daemon — run this continuously
+yarn capture:status        # read-only health summary
+yarn observers:findings    # recompute + publish findings (no network access)
+yarn serve                 # read-only HTTP server for public/
+```
+
+#### Why capture must run continuously
+
+`close_observation` on the AR.IO program is **permissionless**: observation
+accounts are swept off the chain within days of an epoch closing, and there is
+no archive to backfill from. An hour of downtime is an hour of samples lost
+permanently, for everyone. This is not a batch job that can be caught up later
+— run it under a supervisor and alert on it (see
+[docs/operations.md](docs/operations.md)).
+
+The RPC budget is small enough that continuous operation is cheap: **~170 calls
+and ~2–3 MiB per day**, since one `getProgramAccounts` returns every live
+observation in the network.
+
+#### What it detects
+
+Twelve detectors over three families of evidence: identity (the same report
+transaction, byte-identical result blobs), behaviour (near-identical results by
+masked Hamming distance, co-submission timing), and infrastructure (shared IP,
+/24, base domain, ASN, or analyzer cluster — joined from the daily analysis, so
+the findings process never resolves DNS itself). Two more roll those up into
+composite and persistent-correlation findings.
+
+The result blob is treated as **opaque bytes** throughout: it is compared and
+republished verbatim, never decoded into per-gateway verdicts.
+
+`near_identical_results` is **uncalibrated** — its 0.90 threshold is a
+placeholder, its findings are capped at `medium` severity and 0.5 confidence,
+and they are marked `calibrated: false`. Run `yarn observers:calibrate` once
+you have at least 14 captured epochs; it refuses to promote a threshold it has
+measured as having no discriminating power. See
+[docs/observer-independence.md](docs/observer-independence.md#4-why-near_identical_results-is-uncalibrated-and-what-it-costs).
+
+#### npm scripts
+
+| Script | What it does |
+|---|---|
+| `yarn capture` | Capture daemon. Polls every 10 minutes, single-instance, survives errors. |
+| `yarn capture:once` | One cycle then exit. Use in cron only if you cannot run a daemon. |
+| `yarn capture:status` | Last run, status, counts, consecutive unhealthy runs. |
+| `yarn observers:findings` | Recompute findings for the rolling window and publish. |
+| `yarn observers:backfill` | Same, over every captured epoch. |
+| `yarn observers:calibrate` | Measure the similarity distribution; `--activate <id>` promotes a row. |
+| `yarn serve` | Read-only HTTP server over `public/`. |
+| `yarn db:migrate` / `yarn db:stats` | Apply migrations / print table counts. |
+| `yarn test` | Unit tests (`node:test`). No network access. |
+
 ### Environment Variables
+
+**Observer Independence Indexer:**
+
+| Variable | Description | Default |
+|---|---|---|
+| `SOLANA_RPC_URL` | Endpoint for every on-chain read. May carry a provider token, so it is never logged, stored, or published — only its host is ever printed. | SDK `MAINNET_RPC_URL` |
+| `OBSERVER_DB_PATH` | SQLite store. Irreplaceable — see backups. | `data/observations.sqlite` |
+| `OBSERVER_POLL_INTERVAL_MS` | Capture interval | `600000` (10 min) |
+| `POLL_RUN_RETENTION_DAYS` | How long the `poll_runs` log is kept. Observations are never pruned. | `30` |
+| `OBSERVER_SIMILARITY_THRESHOLD` | Masked-Hamming threshold. **Uncalibrated placeholder** — measure, do not guess. | `0.90` |
+| `OBSERVER_WINDOW_EPOCHS` | Rolling window the detectors consider | `30` |
+| `OBSERVER_CO_SUBMISSION_WINDOW_S` | Co-submission clustering window | `60` |
+| `PUBLIC_DIR` | Directory the publisher writes and the server serves | `public` |
+| `PORT` / `HOST` | Server bind address | `8787` / `127.0.0.1` |
+| `CAPTURE_MAX_AGE_SECONDS` | Age beyond which capture counts as stale | `3600` |
+| `ANALYSIS_MAX_AGE_SECONDS` | Age beyond which the analysis/roster counts as stale | `172800` |
 
 **AR.IO Gateway Analyzer:**
 
@@ -141,6 +221,21 @@ src/
 │   ├── geo-location.ts         # Geographic lookups (ip-api.com)
 │   ├── html-generator.ts       # HTML report with Globe.gl
 │   └── report-generator.ts     # CSV/JSON exports
+├── capture/                    # ENTRY (a): the capture daemon
+│   ├── daemon.ts               # poll loop, single-instance, never dies on a cycle
+│   ├── rpc.ts                  # the only network surface — 2 read-only methods
+│   ├── decode.ts               # account decoding + layout canaries
+│   ├── registry.ts             # registry slot-order snapshots
+│   ├── status.ts               # how a cycle is judged (ok/stale/anomaly/failed)
+│   └── lock.ts                 # single-instance guard
+├── db/                         # SQLite store (migrations, read/write repos)
+├── observers/                  # ENTRY (b): findings, calibration, rollups
+│   ├── hamming.ts              # masked Hamming distance — the one new primitive
+│   ├── detectors/              # the 12 detectors, in fixed order
+│   ├── rollup.ts               # the single per-observer aggregation
+│   └── roster.ts               # the single gateways.json -> GatewayFacts mapping
+├── publish/                    # atomic tmp+rename publishing of public/
+├── server/                     # ENTRY (c): read-only static server
 └── arweave/
     ├── arweave-index.ts        # Arweave analyzer entry point
     ├── arweave-analyzer.ts     # Infrastructure & centralization analysis
@@ -155,11 +250,16 @@ src/
 ## Development
 
 ```bash
-npm run lint       # Run ESLint
-npm run format     # Format code with Prettier
-npm run build      # Compile TypeScript to dist/
-npm run clean      # Remove dist/ and generated CSV/JSON files
+yarn test          # Unit tests (node:test via tsx) — no network access
+yarn lint          # Run ESLint
+yarn format        # Format code with Prettier
+yarn build         # Compile TypeScript to dist/
+yarn clean         # Remove dist/ and generated CSV/JSON files
 ```
+
+Tests live in `test/` and run against in-memory SQLite and synthetic fixtures.
+They never contact an RPC endpoint; the capture path is exercised through an
+injected decoder.
 
 To regenerate an HTML report from existing CSV/JSON data:
 

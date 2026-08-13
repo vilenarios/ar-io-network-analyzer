@@ -27,19 +27,7 @@ import {
 import { dirname, join, resolve } from 'path';
 import type { Database } from 'better-sqlite3';
 import { openWriter, tryOpenReader } from '../db/index.js';
-import {
-  consecutiveFailedPollRuns,
-  latestPollRun,
-  listFindings,
-  listEpochs,
-} from '../db/repo-read.js';
-import type {
-  Finding,
-  GatewayObserverSummary,
-  ObserverIndependenceRollup,
-  Severity,
-} from '../observers/types.js';
-import { SEVERITY_ORDER } from '../observers/types.js';
+import { consecutiveFailedPollRuns, latestPollRun } from '../db/repo-read.js';
 import {
   SCHEMA_VERSION,
   type DocumentEntry,
@@ -53,8 +41,18 @@ import {
 
 const DEFAULT_ANALYSIS_MAX_AGE_SECONDS = 172_800;
 const DEFAULT_CAPTURE_MAX_AGE_SECONDS = 3_600;
-const PUBLISH_LOCK_WAIT_MS = 60_000;
 const PUBLISH_LOCK_STALE_MS = 300_000;
+const PUBLISH_LOCK_HEARTBEAT_MS = 15_000;
+/** How long a 'wait' publisher stays quiet before it starts complaining. */
+const PUBLISH_LOCK_QUIET_WAIT_MS = 60_000;
+/**
+ * How long it waits in total. Deliberately longer than the stale window: a
+ * live holder finishes in well under a second, and a holder that died mid
+ * publish stops heartbeating, so waiting past PUBLISH_LOCK_STALE_MS is what
+ * guarantees the daily run eventually publishes instead of silently skipping
+ * a day because of a wedged 10-minute cadence.
+ */
+const PUBLISH_LOCK_MAX_WAIT_MS = PUBLISH_LOCK_STALE_MS + 30_000;
 
 export interface PublishInput {
   network?: NetworkDocument;
@@ -65,9 +63,10 @@ export interface PublishInput {
   homepage?: { html: string; csv: string; summaryJson: string; date: string };
   archiveDate?: string;
   /**
-   * 'wait' (default) blocks up to 60s then takes over a stale lock — used by
-   * the daily run. 'skip' abandons this cycle when the lock is held — used by
-   * the 10-minute cadence, which will simply re-run.
+   * 'wait' (default) blocks up to 60s for the holder to finish — used by the
+   * daily run. 'skip' abandons this cycle immediately when the lock is held —
+   * used by the 10-minute cadence, which will simply re-run. Neither mode ever
+   * evicts a live holder; only a lock whose heartbeat stopped is taken over.
    */
   lock?: 'wait' | 'skip';
 }
@@ -76,8 +75,16 @@ export function publicDir(): string {
   return resolve(process.env.PUBLIC_DIR || 'public');
 }
 
+/**
+ * Per-process scratch tree.
+ *
+ * Two cadences publish. A single shared `public.tmp` meant that whichever
+ * publisher finished first deleted the tree the other was still writing into,
+ * and its next `renameSync` threw ENOENT — a publish failure caused purely by
+ * the other publish succeeding.
+ */
 function tmpDir(): string {
-  return `${publicDir()}.tmp`;
+  return `${publicDir()}.tmp.${process.pid}`;
 }
 
 function sha256(content: string | Buffer): string {
@@ -208,8 +215,10 @@ async function acquirePublishLock(mode: 'wait' | 'skip'): Promise<PublishLockHan
     return { db: null, release: () => {} };
   }
 
-  const deadline = Date.now() + (mode === 'wait' ? PUBLISH_LOCK_WAIT_MS : 0);
+  const startedAt = Date.now();
+  const deadline = startedAt + (mode === 'wait' ? PUBLISH_LOCK_MAX_WAIT_MS : 0);
   const pid = process.pid;
+  let complained = false;
 
   for (;;) {
     let acquired = false;
@@ -221,10 +230,13 @@ async function acquirePublishLock(mode: 'wait' | 'skip'): Promise<PublishLockHan
         >('SELECT pid, heartbeat_at FROM publish_lock WHERE id = 1')
         .get();
 
+      // Staleness is a property of the HOLDER (its heartbeat stopped), never
+      // of the waiter's patience. Taking the lock because we got bored would
+      // put two publishers in the tree at once, each merging a manifest the
+      // other is about to overwrite — the exact invariant this module exists
+      // to guarantee.
       const stale = !existing || Date.now() - existing.heartbeat_at > PUBLISH_LOCK_STALE_MS;
-      const expired = mode === 'wait' && Date.now() >= deadline;
-
-      if (existing && !stale && !expired) return;
+      if (existing && !stale) return;
 
       db.prepare(
         `INSERT INTO publish_lock (id, pid, acquired_at, heartbeat_at) VALUES (1, ?, ?, ?)
@@ -236,9 +248,24 @@ async function acquirePublishLock(mode: 'wait' | 'skip'): Promise<PublishLockHan
     attempt.immediate();
 
     if (acquired) {
+      // Refresh while we work: a publish slower than PUBLISH_LOCK_STALE_MS
+      // would otherwise invalidate its own lock and invite a takeover.
+      const beat = setInterval(() => {
+        try {
+          db.prepare('UPDATE publish_lock SET heartbeat_at = ? WHERE id = 1 AND pid = ?').run(
+            Date.now(),
+            pid
+          );
+        } catch {
+          /* the release path reports real trouble */
+        }
+      }, PUBLISH_LOCK_HEARTBEAT_MS);
+      beat.unref?.();
+
       return {
         db,
         release: () => {
+          clearInterval(beat);
           try {
             db.prepare('DELETE FROM publish_lock WHERE id = 1 AND pid = ?').run(pid);
           } finally {
@@ -249,8 +276,19 @@ async function acquirePublishLock(mode: 'wait' | 'skip'): Promise<PublishLockHan
     }
 
     if (mode === 'skip' || Date.now() >= deadline) {
+      if (mode === 'wait') {
+        console.warn(
+          `⚠️  publish lock still held after ${Math.round((Date.now() - startedAt) / 1000)}s; ` +
+            `giving up rather than publishing alongside another writer`
+        );
+      }
       db.close();
       return null;
+    }
+
+    if (!complained && Date.now() - startedAt > PUBLISH_LOCK_QUIET_WAIT_MS) {
+      complained = true;
+      console.warn('⚠️  waiting for the publish lock (another cadence is publishing)…');
     }
 
     // Coarse polling; publishing is a once-per-cadence operation.
@@ -332,110 +370,5 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
     console.log(`📦 published to ${publicDir()}`);
   } finally {
     lock.release();
-  }
-}
-
-export interface ObserverPublishContext {
-  rollup: ObserverIndependenceRollup | null;
-  byGateway: Map<string, GatewayObserverSummary>;
-  /** Ranked findings for the HTML report's Observers tab; empty hides the tab. */
-  findings: Finding[];
-}
-
-/**
- * Join observer findings onto the gateway roster for the daily analysis.
- * Returns empty context when no observations have been captured yet.
- */
-export function loadObserverContext(): ObserverPublishContext {
-  const empty: ObserverPublishContext = { rollup: null, byGateway: new Map(), findings: [] };
-  const db = tryOpenReader();
-  if (!db) return empty;
-
-  try {
-    const epochs = listEpochs(db);
-    if (epochs.length === 0) return empty;
-
-    const findings = listFindings(db);
-    const bySeverity: Record<Severity, number> = { info: 0, low: 0, medium: 0, high: 0 };
-    const byKind: Record<string, number> = {};
-    const byGateway = new Map<string, GatewayObserverSummary>();
-
-    for (const row of db
-      .prepare<[], { observer: string; epochs: number; first_epoch: number; last_epoch: number }>(
-        `SELECT observer, COUNT(*) AS epochs, MIN(epoch_index) AS first_epoch,
-                MAX(epoch_index) AS last_epoch
-           FROM observations GROUP BY observer`
-      )
-      .all()) {
-      byGateway.set(row.observer, {
-        observer: row.observer,
-        epochsObserved: row.epochs,
-        firstEpochIndex: row.first_epoch,
-        lastEpochIndex: row.last_epoch,
-        findingCount: 0,
-        maxSeverity: null,
-        kinds: [],
-      });
-    }
-
-    for (const finding of findings) {
-      bySeverity[finding.severity]++;
-      byKind[finding.kind] = (byKind[finding.kind] ?? 0) + 1;
-
-      for (const observer of finding.observers) {
-        const summary = byGateway.get(observer);
-        if (!summary) continue;
-        summary.findingCount++;
-        if (!summary.kinds.includes(finding.kind)) summary.kinds.push(finding.kind);
-        if (
-          summary.maxSeverity === null ||
-          SEVERITY_ORDER.indexOf(finding.severity) > SEVERITY_ORDER.indexOf(summary.maxSeverity)
-        ) {
-          summary.maxSeverity = finding.severity;
-        }
-      }
-    }
-
-    const calibrated = findings.some(
-      (f) => f.kind === 'near_identical_results' && f.detail.calibrated === true
-    );
-
-    const ranked: Finding[] = findings
-      .slice()
-      .sort(
-        (a, b) =>
-          SEVERITY_ORDER.indexOf(b.severity) - SEVERITY_ORDER.indexOf(a.severity) ||
-          b.confidence - a.confidence ||
-          (b.epochIndex ?? Number.MAX_SAFE_INTEGER) - (a.epochIndex ?? Number.MAX_SAFE_INTEGER)
-      );
-
-    const rollup: ObserverIndependenceRollup = {
-      generatedAt: new Date().toISOString(),
-      epochRange: {
-        from: epochs[0].epochIndex,
-        to: epochs[epochs.length - 1].epochIndex,
-        count: epochs.length,
-      },
-      observerCount: byGateway.size,
-      findingCount: findings.length,
-      bySeverity,
-      byKind,
-      calibrated,
-      topFindings: ranked.slice(0, 20).map((f) => ({
-        id: f.id,
-        kind: f.kind,
-        epochIndex: f.epochIndex,
-        severity: f.severity,
-        confidence: f.confidence,
-        observerCount: f.observers.length,
-        summary: f.summary,
-      })),
-    };
-
-    return { rollup, byGateway, findings: ranked };
-  } catch {
-    return empty;
-  } finally {
-    db.close();
   }
 }

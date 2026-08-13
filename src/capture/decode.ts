@@ -26,6 +26,9 @@ const GATEWAY_RESULTS_OFFSET = 48;
 const GATEWAY_RESULTS_BYTES = 375;
 const SCHEMA_MAJOR_OFFSET = 466;
 
+/** A u16 gatewayCount can address at most this many bits of the blob. */
+export const MAX_GATEWAY_COUNT = GATEWAY_RESULTS_BYTES * 8; // 3000
+
 /** One day of slack for a chain clock that runs ahead of ours. */
 const FUTURE_TIMESTAMP_TOLERANCE_SECONDS = 86400;
 
@@ -80,6 +83,16 @@ export function decodeObservationAccount(account: RawObservationAccount): Decode
       return { ok: false, reason: 'gateway_results_offset_mismatch' };
     }
 
+    // gatewayCount is the DENOMINATOR of every similarity score and the length
+    // of the masked prefix, so an out-of-range value does not merely look odd,
+    // it manufactures findings: 0 makes every blob hash to the digest of an
+    // empty buffer (a confidence-1.0 `identical_results` over zero compared
+    // bytes), and > 3000 inflates the denominator until two maximally
+    // different blobs score 0.95. Park the bytes rather than trust it.
+    if (!isValidGatewayCount(record.gatewayCount)) {
+      return { ok: false, reason: `gateway_count_out_of_range:${record.gatewayCount}` };
+    }
+
     return { ok: true, record };
   } catch (error) {
     return { ok: false, reason: `deserialize_failed:${(error as Error).name}` };
@@ -89,7 +102,7 @@ export function decodeObservationAccount(account: RawObservationAccount): Decode
 /** Populated once by {@link loadSdkDecoder}; keeps decode() synchronous. */
 let sdkDeserializeImpl: ((data: Buffer) => SdkObservation) | null = null;
 
-interface SdkObservation {
+export interface SdkObservation {
   epochIndex: number;
   observer: string;
   gatewayResults: Buffer;
@@ -109,6 +122,20 @@ function sdkDeserialize(data: Buffer): SdkObservation {
 export async function loadSdkDecoder(): Promise<void> {
   const { deserializeObservation } = await import('@ar.io/sdk');
   sdkDeserializeImpl = deserializeObservation as (data: Buffer) => SdkObservation;
+}
+
+/**
+ * Install a decoder directly. Tests use this to exercise the validation and
+ * provenance logic against synthetic accounts without importing the SDK or
+ * touching the network; production always goes through {@link loadSdkDecoder}.
+ */
+export function useSdkDecoder(impl: ((data: Buffer) => SdkObservation) | null): void {
+  sdkDeserializeImpl = impl;
+}
+
+/** `1 <= gatewayCount <= 3000`, integral. Anything else is not comparable. */
+export function isValidGatewayCount(gatewayCount: number): boolean {
+  return Number.isInteger(gatewayCount) && gatewayCount > 0 && gatewayCount <= MAX_GATEWAY_COUNT;
 }
 
 function isSuspectTimestamp(submittedAt: number): boolean {

@@ -37,8 +37,14 @@ for (let i = 0; i < 256; i++) {
   POPCOUNT[i] = (i & 1) + POPCOUNT[i >> 1];
 }
 
-/** Number of meaningful bytes for a bit count. */
+/**
+ * Number of meaningful bytes for a bit count.
+ *
+ * Non-finite or negative counts collapse to 0 rather than producing NaN — a
+ * NaN length silently turns every downstream slice into an empty buffer.
+ */
 export function meaningfulBytes(gatewayCount: number): number {
+  if (!Number.isFinite(gatewayCount)) return 0;
   return Math.ceil(Math.max(0, gatewayCount) / 8);
 }
 
@@ -53,9 +59,14 @@ function finalByteMask(gatewayCount: number): number {
  * byte masked. Two observations with the same prefix voted identically.
  */
 export function maskedPrefix(blob: Buffer, gatewayCount: number): Buffer {
-  const bytes = Math.min(meaningfulBytes(gatewayCount), blob.length);
+  const nominal = meaningfulBytes(gatewayCount);
+  const bytes = Math.min(nominal, blob.length);
   const prefix = Buffer.from(blob.subarray(0, bytes));
-  if (bytes > 0) {
+
+  // The mask belongs to the NOMINAL final byte. When the blob is shorter than
+  // the prefix the count claims, the last byte we actually have is a full data
+  // byte, and masking it would destroy real bits.
+  if (bytes > 0 && bytes === nominal) {
     prefix[bytes - 1] &= finalByteMask(gatewayCount);
   }
   return prefix;
@@ -77,7 +88,8 @@ export function maskedHamming(
   gatewayCountB?: number
 ): SimilarityResult {
   const countB = gatewayCountB ?? gatewayCount;
-  const comparedBits = Math.min(gatewayCount, countB);
+  const sanitize = (n: number) => (Number.isFinite(n) && n > 0 ? Math.floor(n) : 0);
+  const comparedBits = Math.min(sanitize(gatewayCount), sanitize(countB));
   const bytes = meaningfulBytes(comparedBits);
 
   const prefixA = maskedPrefix(a, comparedBits);
@@ -98,7 +110,11 @@ export function maskedHamming(
     hammingBytes,
     comparedBits,
     meaningfulBytes: bytes,
-    similarity: comparedBits > 0 ? 1 - hammingBits / comparedBits : 1,
+    // No compared bits means no evidence — and "no evidence" must never read
+    // as "maximum similarity". A zero (or absent) gatewayCount would otherwise
+    // make every blob look perfectly identical to every other one, which is
+    // exactly how a confidence-1.0 finding gets manufactured out of nothing.
+    similarity: comparedBits > 0 ? 1 - hammingBits / comparedBits : 0,
     gatewayCountMismatch: gatewayCount !== countB,
   };
 }

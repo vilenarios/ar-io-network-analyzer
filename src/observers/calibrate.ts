@@ -18,13 +18,23 @@ import { assertNodeVersion } from '../utils/runtime.js';
 import { openWriter } from '../db/index.js';
 import { getObservationsForEpochs, listEpochs } from '../db/repo-read.js';
 import { pairwiseMatrix } from './hamming.js';
-import { readPublishedDocument } from '../publish/publish.js';
-import type { GatewaysDocument } from '../publish/contract.js';
+import { activateCalibration } from '../db/repo-write.js';
+import { loadGatewayRoster } from './roster.js';
 import type { GatewayFacts } from './types.js';
 
 /** A threshold fitted to fewer epochs than this is worse than no threshold. */
 const MIN_EPOCHS_FOR_CALIBRATION = 14;
 const MIN_RECOMMENDED_THRESHOLD = 0.8;
+
+/**
+ * Similarity is quantised: one differing bit out of `gatewayCount` moves the
+ * score by 1/gatewayCount (≈0.0016 at 643 gateways). Detectors fire on
+ * `similarity >= threshold`, so a threshold set exactly AT the most similar
+ * presumed-independent pair guarantees that pair fires on the first calibrated
+ * run. Sit one quantum above it instead. (Percentiles use nearest-rank, so for
+ * fewer than ~1000 samples p99.9 IS the maximum — the margin is not optional.)
+ */
+const CALIBRATION_MARGIN = 0.002;
 
 interface PairSample {
   epochIndex: number;
@@ -64,46 +74,32 @@ function relationBetween(a: GatewayFacts | undefined, b: GatewayFacts | undefine
   return reasons;
 }
 
-function loadRoster(): Map<string, GatewayFacts> {
-  const document = readPublishedDocument<GatewaysDocument>('api/v1/gateways.json');
-  const roster = new Map<string, GatewayFacts>();
-  if (!document) return roster;
-
-  for (const entry of document.gateways) {
-    roster.set(entry.wallet, {
-      wallet: entry.wallet,
-      fqdn: entry.fqdn,
-      ipAddress: entry.ipAddress,
-      ipRange: entry.ipRange,
-      asn: entry.asn,
-      asnOrg: entry.asnOrg,
-      baseDomain: entry.baseDomain,
-      clusterKey: entry.clusterKey,
-      clusterKind: entry.clusterKind,
-      clusterSize: entry.clusterSize,
-      stake: entry.stake,
-      overallCentralization: entry.scores.overall,
-    });
-  }
-  return roster;
-}
-
-function activate(id: number): void {
+function activate(id: number, force: boolean): void {
   const db = openWriter();
   try {
-    const row = db.prepare('SELECT id FROM calibration WHERE id = ?').get(id);
-    if (!row) {
-      console.error(`❌ no calibration row with id ${id}`);
-      process.exitCode = 1;
+    const result = activateCalibration(db, id, { force });
+
+    if (result.ok) {
+      console.log(
+        `✅ calibration ${id} is now active — near_identical_results findings are calibrated.`
+      );
       return;
     }
-    const run = db.transaction(() => {
-      db.prepare('UPDATE calibration SET active = 0').run();
-      db.prepare('UPDATE calibration SET active = 1 WHERE id = ?').run(id);
-    });
-    run.immediate();
-    console.log(
-      `✅ calibration ${id} is now active — near_identical_results findings are calibrated.`
+
+    process.exitCode = 1;
+    if (result.reason === 'not_found') {
+      console.error(`❌ no calibration row with id ${id}`);
+      return;
+    }
+
+    console.error(
+      `❌ calibration ${id} is flagged NO_SEPARATION: the most similar presumed-independent ` +
+        `pair scored above the median presumed-related pair, so blob similarity carries no\n` +
+        `   discriminating signal at this network size. Activating it would promote\n` +
+        `   near_identical_results from confidence 0.5 (capped medium) to 0.9 (possibly high) —\n` +
+        `   i.e. publish strong accusations derived from a metric this run just measured as\n` +
+        `   useless. Keep capturing epochs and re-measure.\n\n` +
+        `   If you truly intend this: yarn observers:calibrate --activate ${id} --force`
     );
   } finally {
     db.close();
@@ -122,7 +118,7 @@ function main(): void {
       process.exitCode = 1;
       return;
     }
-    activate(id);
+    activate(id, args.includes('--force'));
     return;
   }
 
@@ -142,7 +138,7 @@ function main(): void {
       db,
       known.map((e) => e.epochIndex)
     );
-    const roster = loadRoster();
+    const roster = loadGatewayRoster({ quiet: true }).gateways;
     if (roster.size === 0) {
       console.warn(
         '⚠️  no published gateways.json — every pair will be treated as presumed-independent, ' +
@@ -174,7 +170,10 @@ function main(): void {
     const p999 = percentile(independentSorted, 99.9);
     const maxIndependent = independentSorted[independentSorted.length - 1] ?? null;
     const p50Related = percentile(relatedSorted, 50);
-    const recommended = Math.max(p999 ?? MIN_RECOMMENDED_THRESHOLD, MIN_RECOMMENDED_THRESHOLD);
+    const recommended = Math.min(
+      1,
+      Math.max((p999 ?? MIN_RECOMMENDED_THRESHOLD) + CALIBRATION_MARGIN, MIN_RECOMMENDED_THRESHOLD)
+    );
 
     // No separating signal: the most similar independent pair beats the median
     // related pair, so the detector cannot discriminate at this network size.
@@ -210,8 +209,9 @@ function main(): void {
       .prepare(
         `INSERT INTO calibration (
            computed_at, epoch_from, epoch_to, epoch_count, pair_count, independent_pairs,
-           p50, p90, p99, p995, p999, max_independent, recommended_threshold, active, notes
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+           p50, p90, p99, p995, p999, max_independent, recommended_threshold, active, notes,
+           separates
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
       )
       .run(
         Date.now(),
@@ -227,12 +227,16 @@ function main(): void {
         p999,
         maxIndependent,
         recommended,
-        notes
+        notes,
+        separates === null ? null : separates ? 1 : 0
       );
 
     console.log(`\nRecommended threshold: ${recommended.toFixed(4)}`);
     console.log(`Recorded as calibration id ${info.lastInsertRowid} (inactive).`);
     console.log(`Review the distribution above, then activate deliberately:`);
+    if (separates === false) {
+      console.log(`  (this run is flagged NO_SEPARATION and will be REFUSED without --force)\n`);
+    }
     console.log(`  yarn observers:calibrate --activate ${info.lastInsertRowid}\n`);
   } finally {
     db.close();

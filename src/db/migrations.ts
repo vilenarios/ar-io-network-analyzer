@@ -168,6 +168,28 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    name: 'provenance-and-guards',
+    statements: [
+      // M4: a registry snapshot taken while its epoch was still live is
+      // authoritative; one taken for an epoch that had already elapsed is an
+      // approximation and must never be presented as decodable slot order.
+      `ALTER TABLE registry_snapshots ADD COLUMN in_epoch INTEGER NOT NULL DEFAULT 0`,
+
+      // L2: park the same undecodable bytes once, not once per cycle.
+      `ALTER TABLE raw_unparsed ADD COLUMN data_sha256 TEXT`,
+      `ALTER TABLE raw_unparsed ADD COLUMN seen_count INTEGER`,
+      `ALTER TABLE raw_unparsed ADD COLUMN last_seen_at INTEGER`,
+      `CREATE INDEX IF NOT EXISTS idx_raw_dedupe ON raw_unparsed(pubkey, data_sha256)`,
+
+      // M5: whether the calibration run found any separating signal at all.
+      // 1 = separates, 0 = NO_SEPARATION, NULL = undetermined.
+      `ALTER TABLE calibration ADD COLUMN separates INTEGER`,
+
+      `CREATE INDEX IF NOT EXISTS idx_poll_status ON poll_runs(status, started_at DESC)`,
+    ],
+  },
 ];
 
 /**

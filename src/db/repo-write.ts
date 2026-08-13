@@ -7,6 +7,7 @@
  * `observation_revisions` and the revision counter bumps.
  */
 
+import { createHash } from 'crypto';
 import type { Database } from 'better-sqlite3';
 import type { DecodedObservation, RegistrySnapshot } from '../observers/types.js';
 
@@ -14,7 +15,13 @@ export interface UpsertResult {
   inserted: number;
   updated: number;
   revisions: number;
+  /** Reads refused because they were older than what we already hold. */
+  stale: number;
+  /** Two accounts in one read claiming the same (epoch, observer). */
+  duplicateKeys: number;
 }
+
+export type UpsertOutcome = 'inserted' | 'updated' | 'revised' | 'stale';
 
 interface ExistingRow {
   gateway_results: Buffer;
@@ -23,10 +30,19 @@ interface ExistingRow {
   submitted_at: number;
   pubkey: string;
   revision: number;
+  last_seen_slot: number;
 }
 
 /**
  * Insert or update one observation.
+ *
+ * MONOTONIC, not merely idempotent. RPC providers load-balance across
+ * replicas, and a lagging replica happily serves an older version of an
+ * account. Overwriting newer data with older data would silently corrupt every
+ * downstream Hamming score and finding — the newer bytes would survive only in
+ * `observation_revisions`, which nothing reads. So a read that is older by
+ * either clock (chain `submittedAt`, or the RPC context slot it was read at)
+ * is refused outright and reported as `'stale'`.
  *
  * Callers wrap a whole cycle in ONE transaction — this function never opens
  * one of its own.
@@ -36,10 +52,11 @@ export function upsertObservation(
   record: DecodedObservation,
   seenAt: number,
   seenSlot: number
-): 'inserted' | 'updated' | 'revised' {
+): UpsertOutcome {
   const existing = db
     .prepare<[number, string], ExistingRow>(
-      `SELECT gateway_results, gateway_count, report_tx_id, submitted_at, pubkey, revision
+      `SELECT gateway_results, gateway_count, report_tx_id, submitted_at, pubkey, revision,
+              last_seen_slot
          FROM observations WHERE epoch_index = ? AND observer = ?`
     )
     .get(record.epochIndex, record.observer);
@@ -82,11 +99,19 @@ export function upsertObservation(
   if (existing.pubkey !== record.pubkey) changed.push('pubkey');
 
   if (changed.length === 0) {
+    // Never regress the provenance columns either: a stale replica must not
+    // make the row claim it was last confirmed at an older slot.
     db.prepare(
-      `UPDATE observations SET last_seen_at = ?, last_seen_slot = ?
+      `UPDATE observations SET last_seen_at = MAX(last_seen_at, ?), last_seen_slot = MAX(last_seen_slot, ?)
         WHERE epoch_index = ? AND observer = ?`
     ).run(seenAt, seenSlot, record.epochIndex, record.observer);
     return 'updated';
+  }
+
+  // The ordering guard. Either clock going backwards means this read came from
+  // a replica behind the one that produced the row we already hold.
+  if (record.submittedAt < existing.submitted_at || seenSlot < existing.last_seen_slot) {
+    return 'stale';
   }
 
   insertRevision(db, record.epochIndex, record.observer, existing, seenAt, seenSlot, changed);
@@ -147,24 +172,56 @@ export function insertRevision(
   );
 }
 
-/** Batch form. The caller still owns the transaction. */
+/**
+ * Batch form. The caller still owns the transaction.
+ *
+ * `(epoch_index, observer)` is the primary key because `report_tx_id` is NOT
+ * unique — seven epoch-511 observers shared one report — but it is not the
+ * chain's natural key, `pubkey` is. Two live accounts claiming one
+ * `(epoch, observer)` would therefore collapse into a single row with array
+ * order deciding the winner, which is indistinguishable from a legitimate
+ * mid-cycle update. Detect it here and report it so the caller can shout.
+ */
 export function upsertObservations(
   db: Database,
   records: DecodedObservation[],
   seenAt: number,
   seenSlot: number
 ): UpsertResult {
-  const result: UpsertResult = { inserted: 0, updated: 0, revisions: 0 };
+  const result: UpsertResult = {
+    inserted: 0,
+    updated: 0,
+    revisions: 0,
+    stale: 0,
+    duplicateKeys: 0,
+  };
+
+  const seenKeys = new Set<string>();
   for (const record of records) {
+    const key = `${record.epochIndex}|${record.observer}`;
+    if (seenKeys.has(key)) result.duplicateKeys++;
+    seenKeys.add(key);
+
     const outcome = upsertObservation(db, record, seenAt, seenSlot);
     if (outcome === 'inserted') result.inserted++;
     else if (outcome === 'updated') result.updated++;
+    else if (outcome === 'stale') result.stale++;
     else {
       result.revisions++;
       result.updated++;
     }
   }
   return result;
+}
+
+/** The `(epoch, observer)` keys appearing more than once in one read. */
+export function duplicateObservationKeys(records: DecodedObservation[]): string[] {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    const key = `${record.epochIndex}|${record.observer}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, n]) => n > 1).map(([key]) => key);
 }
 
 /**
@@ -177,15 +234,16 @@ export function upsertObservations(
 export function insertRegistrySlots(db: Database, snapshot: RegistrySnapshot): void {
   db.prepare(
     `INSERT OR REPLACE INTO registry_snapshots
-       (epoch_index, gateway_count, captured_at, captured_at_slot, registry_pubkey, digest)
-     VALUES (?, ?, ?, ?, ?, ?)`
+       (epoch_index, gateway_count, captured_at, captured_at_slot, registry_pubkey, digest, in_epoch)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(
     snapshot.epochIndex,
     snapshot.gatewayCount,
     snapshot.capturedAt,
     snapshot.capturedAtSlot,
     snapshot.registryPubkey,
-    snapshot.digest
+    snapshot.digest,
+    snapshot.inEpoch ? 1 : 0
   );
 
   db.prepare('DELETE FROM registry_slots WHERE epoch_index = ?').run(snapshot.epochIndex);
@@ -198,7 +256,14 @@ export function insertRegistrySlots(db: Database, snapshot: RegistrySnapshot): v
   });
 }
 
-/** Never /dev/null a decode failure — park the bytes and keep going. */
+/**
+ * Never /dev/null a decode failure — park the bytes and keep going.
+ *
+ * Deduped on `(pubkey, sha256(bytes))`: an account that is permanently
+ * undecodable is re-read every cycle, and a plain INSERT would add ~630 bytes
+ * of base64 every 10 minutes forever to the same file capture depends on.
+ * A repeat bumps a counter instead.
+ */
 export function insertRawUnparsed(
   db: Database,
   pubkey: string,
@@ -206,11 +271,41 @@ export function insertRawUnparsed(
   reason: string,
   seenAt: number,
   seenSlot: number
-): void {
+): 'inserted' | 'repeated' {
+  const digest = createHash('sha256').update(data).digest('hex');
+
+  const existing = db
+    .prepare<
+      [string, string],
+      { id: number }
+    >('SELECT id FROM raw_unparsed WHERE pubkey = ? AND data_sha256 = ? LIMIT 1')
+    .get(pubkey, digest);
+
+  if (existing) {
+    db.prepare(
+      `UPDATE raw_unparsed SET seen_count = COALESCE(seen_count, 1) + 1, last_seen_at = ?,
+         reason = ? WHERE id = ?`
+    ).run(seenAt, reason, existing.id);
+    return 'repeated';
+  }
+
   db.prepare(
-    `INSERT INTO raw_unparsed (pubkey, data_b64, byte_length, reason, seen_at, seen_slot)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(pubkey, data.toString('base64'), data.length, reason, seenAt, seenSlot);
+    `INSERT INTO raw_unparsed
+       (pubkey, data_b64, byte_length, reason, seen_at, seen_slot, data_sha256, seen_count, last_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`
+  ).run(pubkey, data.toString('base64'), data.length, reason, seenAt, seenSlot, digest, seenAt);
+  return 'inserted';
+}
+
+/**
+ * Drop poll-run rows older than `keepMs`. 144 rows/day accumulate forever
+ * otherwise, in the same file the capture write path serialises on.
+ */
+export function prunePollRuns(db: Database, keepMs: number, now = Date.now()): number {
+  const info = db
+    .prepare(`DELETE FROM poll_runs WHERE started_at < ? AND status != 'running'`)
+    .run(now - keepMs);
+  return info.changes;
 }
 
 /** Open a poll run row in the 'running' state and return its id. */
@@ -229,7 +324,12 @@ export interface PollRunOutcome {
   revisions: number | null;
   unparsed: number | null;
   canaryCount: number | null;
-  status: 'ok' | 'failed' | 'stale';
+  /**
+   * 'anomaly' is the one that matters: a cycle whose RPC call succeeded but
+   * which captured nothing useful. Recording that as 'ok' is how a total
+   * blackout gets a green light. See capture/status.ts.
+   */
+  status: 'ok' | 'failed' | 'stale' | 'anomaly';
   error: string | null;
 }
 
@@ -270,13 +370,29 @@ export interface LockState {
   acquired: boolean;
   heldBy?: { pid: number; host: string; heartbeatAt: number };
   tookOverStale?: boolean;
+  tookOverDead?: boolean;
 }
 
 /**
- * Single-instance guard. Refuses when a live heartbeat exists; takes over a
- * lock whose heartbeat is older than `staleAfterMs`.
+ * Single-instance guard.
+ *
+ * Refuses when a live heartbeat exists; takes over a lock whose heartbeat is
+ * older than `staleAfterMs`, and — crucially — a lock left behind on THIS host
+ * by a process that no longer exists. Without the liveness probe, any abnormal
+ * exit (crash, OOM, SIGKILL, host reset) makes every supervisor restart refuse
+ * for `staleAfterMs`, which at a 10-minute interval is half an hour with
+ * capture down and epochs being swept off the chain.
+ *
+ * `holderIsDead` is injected so the check stays testable and so the DB layer
+ * never reaches for `os`/`process` itself.
  */
-export function acquirePollLock(db: Database, pid: number, host: string, staleAfterMs: number) {
+export function acquirePollLock(
+  db: Database,
+  pid: number,
+  host: string,
+  staleAfterMs: number,
+  holderIsDead?: (holder: { pid: number; host: string }) => boolean
+) {
   const now = Date.now();
   let state: LockState = { acquired: false };
 
@@ -288,7 +404,13 @@ export function acquirePollLock(db: Database, pid: number, host: string, staleAf
       >('SELECT pid, host, heartbeat_at FROM poll_lock WHERE id = 1')
       .get();
 
-    if (existing && now - existing.heartbeat_at < staleAfterMs) {
+    const fresh = existing !== undefined && now - existing.heartbeat_at < staleAfterMs;
+    const dead =
+      existing !== undefined && holderIsDead
+        ? holderIsDead({ pid: existing.pid, host: existing.host })
+        : false;
+
+    if (existing && fresh && !dead) {
       state = {
         acquired: false,
         heldBy: { pid: existing.pid, host: existing.host, heartbeatAt: existing.heartbeat_at },
@@ -302,7 +424,7 @@ export function acquirePollLock(db: Database, pid: number, host: string, staleAf
            acquired_at = excluded.acquired_at, heartbeat_at = excluded.heartbeat_at`
     ).run(pid, host, now, now);
 
-    state = { acquired: true, tookOverStale: !!existing };
+    state = { acquired: true, tookOverStale: !!existing && !dead, tookOverDead: dead };
   });
   run.immediate();
 
@@ -348,4 +470,36 @@ export function finishAnalysisRun(
     outcome.error ?? null,
     id
   );
+}
+
+/**
+ * Promote a calibration row.
+ *
+ * A run flagged `NO_SEPARATION` proved that blob similarity carries no
+ * discriminating signal at this network size. Activating it would raise
+ * `near_identical_results` from confidence 0.5 / capped `medium` to 0.9 /
+ * possible `high` — i.e. publish strong accusations derived from a metric the
+ * tool itself just measured as useless. Refuse unless the operator forces it.
+ */
+export function activateCalibration(
+  db: Database,
+  id: number,
+  options: { force?: boolean } = {}
+): { ok: true } | { ok: false; reason: 'not_found' | 'no_separation' } {
+  const row = db
+    .prepare<
+      [number],
+      { id: number; separates: number | null }
+    >('SELECT id, separates FROM calibration WHERE id = ?')
+    .get(id);
+
+  if (!row) return { ok: false, reason: 'not_found' };
+  if (row.separates === 0 && !options.force) return { ok: false, reason: 'no_separation' };
+
+  const run = db.transaction(() => {
+    db.prepare('UPDATE calibration SET active = 0').run();
+    db.prepare('UPDATE calibration SET active = 1 WHERE id = ?').run(id);
+  });
+  run.immediate();
+  return { ok: true };
 }

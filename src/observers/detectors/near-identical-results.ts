@@ -14,7 +14,7 @@
  */
 
 import type { Detector, DetectorContext, Finding } from '../types.js';
-import { capSeverity, makeFinding } from '../finding.js';
+import { makeFinding } from '../finding.js';
 import { connectedComponents, maskedDigest, pairwiseMatrix } from '../hamming.js';
 
 export const nearIdenticalResultsDetector: Detector = {
@@ -64,7 +64,7 @@ export const nearIdenticalResultsDetector: Detector = {
         ? minSimilarity >= config.similarityThreshold + 0.03
           ? 'high'
           : 'medium'
-        : capSeverity('medium', 'medium');
+        : 'medium';
       const confidence = config.calibrated ? 0.9 : 0.5;
 
       findings.push(

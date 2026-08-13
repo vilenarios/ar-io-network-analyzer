@@ -3,7 +3,7 @@
  * precompressed siblings. No business logic and no database access.
  */
 
-import { existsSync, readFileSync, statSync } from 'fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { join, resolve, extname } from 'path';
 
 const MIME_TYPES: Record<string, string> = {
@@ -35,21 +35,42 @@ export interface ResolvedFile {
 /** `^\d+$` and `^\d{4}-\d{2}-\d{2}$` guards, applied before touching the disk. */
 export const EPOCH_PATTERN = /^\d+$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+/** The publisher writes exactly these three files per archived date. */
+export const ARCHIVE_FILE_PATTERN = /^(index\.html|gateways\.csv|summary\.json)$/;
 
 /**
  * Resolve a request path inside the public root.
  *
- * Returns null for anything that escapes the root — the containment check is
- * made on the resolved absolute path, after the pattern guards.
+ * Two containment checks, because `resolve()` is purely lexical: it collapses
+ * `..` in the string but knows nothing about symlinks, so a link planted
+ * anywhere under `public/` would pass the string check and then be followed by
+ * `readFileSync`. The realpath check closes that. Nothing but the publisher
+ * writes `public/` today, so this is defence in depth — for the operator who
+ * symlinks a large artifact into `archive/` and does not think of it as
+ * granting read access to its target.
  */
 export function resolveWithin(root: string, relativePath: string): string | null {
   const clean = relativePath.replace(/^\/+/, '');
   if (clean.includes('\0')) return null;
 
-  const absolute = resolve(join(root, clean));
   const rootResolved = resolve(root);
-  if (absolute !== rootResolved && !absolute.startsWith(`${rootResolved}/`)) return null;
+  const absolute = resolve(join(rootResolved, clean));
+  if (!contains(rootResolved, absolute)) return null;
+
+  try {
+    // Only meaningful once the file exists; a 404 is handled downstream.
+    if (existsSync(absolute) && !contains(realpathSync(rootResolved), realpathSync(absolute))) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
   return absolute;
+}
+
+function contains(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}/`);
 }
 
 /**
