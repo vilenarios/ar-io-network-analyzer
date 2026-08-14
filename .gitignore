@@ -15,6 +15,10 @@ reports/
 *.json
 !package.json
 !tsconfig.json
+!tsconfig.test.json
+# Tooling config that happens to be JSON — the blanket *.json rule above is
+# aimed at generated analysis output, not at checked-in configuration.
+!.eslintrc.json
 
 # Environment files
 .env
@@ -48,3 +52,17 @@ tmp/
 temp/
 *.tmp
 *.temp
+# Observation capture database (irreplaceable — back it up, do not commit)
+# Anchored: an unanchored `data/` would also swallow src/data/.
+/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Published static tree. The scratch tree is per-process (public.tmp.<pid>),
+# so two publishers cannot delete each other's in-flight files.
+/public/
+/public.tmp*/
+
+# Keep the Node version pin tracked
+!.nvmrc

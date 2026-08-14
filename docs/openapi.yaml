@@ -1,0 +1,492 @@
+openapi: 3.1.0
+
+info:
+  title: AR.IO Observation Watch API
+  version: 1.0.0
+  summary: Preserved AR.IO epoch observations and observer-independence findings.
+  description: |
+    A read-only API over AR.IO epoch observations captured from Solana before the
+    network reclaims them, plus findings about whether the observers that produced
+    them were actually independent.
+
+    ## Why this exists
+
+    The observation protocol assumes independent observers reaching majority
+    agreement. On-chain `Observation` accounts are closed to reclaim rent within
+    days, and `close_observation` is permissionless — so effective retention is
+    the minimum across every cranker running, not a value any operator controls.
+    A capture daemon polls every 10 minutes and preserves them.
+
+    ## How to consume it
+
+    Every response is a **precomputed static document**, regenerated on a
+    schedule — no query is executed per request. Consequences worth designing for:
+
+    - Responses carry `Cache-Control: public, max-age=60` and a strong ETag that
+      is a hash of the content. Send `If-None-Match` and expect `304`.
+    - `generatedAt` on every document is the generation time, not request time.
+    - Start from `/api/v1/index.json`: it is the manifest, listing every
+      available document with its size, sha256 and generation time. Prefer
+      discovering paths from it over hardcoding them.
+
+    ## Two properties that will surprise you
+
+    **The findings feed is windowed.** `/api/v1/findings.json` carries a rolling
+    30-epoch window, not all history, because the full set grows without bound.
+    It states its own window in the `window` object. Older findings stay
+    addressable at `/api/v1/epochs/{epochIndex}.json`.
+
+    **Published pair lists are truncated.** The pairwise similarity matrix is
+    O(n²) in an epoch's observer count (the protocol caps observers at 50, so up
+    to 1225 pairs). Findings publish the 20 most-similar pairs and report
+    `pairsTotal` and `pairsTruncated`. Never treat `pairs` as the complete set.
+
+    ## Interpreting findings
+
+    Findings are **observations about observers, not verdicts about people**.
+    "Seven observers submitted the same report from one address" is what the data
+    supports; "these are sybils" is not. Check `calibrated` before trusting a
+    similarity-based finding — while it is `false`, the threshold is a
+    placeholder and `near_identical_results` over-sweeps.
+
+  license:
+    name: AGPL-3.0-or-later
+    identifier: AGPL-3.0-or-later
+
+servers:
+  - url: /
+    description: Behind an nginx TLS proxy; the service itself binds 127.0.0.1.
+
+tags:
+  - name: Discovery
+    description: Start here — the manifest describes everything else.
+  - name: Findings
+    description: Observer-independence signals.
+  - name: Epochs
+    description: Per-epoch observations, including older findings.
+  - name: Operations
+    description: Liveness and freshness.
+
+paths:
+  /api/v1/index.json:
+    get:
+      operationId: getIndex
+      tags: [Discovery]
+      summary: Document manifest
+      description: |
+        Lists every published document with its path, byte size, sha256 and
+        generation time, plus freshness of the capture and analysis cadences.
+        Discover paths from here rather than hardcoding them.
+      responses:
+        '200':
+          description: The manifest.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IndexDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFoundJson' }
+
+  /api/v1/findings.json:
+    get:
+      operationId: getFindings
+      tags: [Findings]
+      summary: Rolling findings feed (windowed)
+      description: |
+        Findings across the most recent epochs. **Windowed** — inspect `window`
+        to see how many epochs are carried and whether anything was truncated.
+        For epochs outside the window use `/api/v1/epochs/{epochIndex}.json`.
+      responses:
+        '200':
+          description: The windowed feed.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FindingsDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFoundJson' }
+
+  /api/v1/observers.json:
+    get:
+      operationId: getObservers
+      tags: [Findings]
+      summary: Per-observer rollup
+      description: |
+        One entry per observer seen in the retained window, with how many epochs
+        it observed, how often it shared a report transaction with another
+        observer, and the worst severity attached to it.
+      responses:
+        '200':
+          description: The observer rollup.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObserversDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404': { $ref: '#/components/responses/NotFoundJson' }
+
+  /api/v1/epochs/{epochIndex}.json:
+    get:
+      operationId: getEpoch
+      tags: [Epochs]
+      summary: One epoch in full
+      description: |
+        Every captured observation for a single epoch plus its findings. This is
+        the durable address for findings that have aged out of the feed window.
+      parameters:
+        - name: epochIndex
+          in: path
+          required: true
+          description: AR.IO epoch index.
+          schema: { type: integer, minimum: 0, examples: [511] }
+      responses:
+        '200':
+          description: The epoch document.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EpochDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404':
+          description: |
+            No document for that epoch. Either it predates capture, or capture
+            was not running when it closed — on-chain observations are
+            unrecoverable once closed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /healthz:
+    get:
+      operationId: getHealth
+      tags: [Operations]
+      summary: Liveness and freshness
+      description: |
+        The only endpoint that touches SQLite, so it is measurably slower
+        (~13 ms vs <2 ms) than the static documents. Do not cache it and do not
+        point a high-frequency check at it.
+
+        `status` is `ok` when capture is fresh and publishing succeeded.
+        Alert on `capture.stale` and on `capture.accountCount == 0` — a zero
+        account count means the discriminator stopped matching, which would
+        otherwise look like a quiet, healthy network.
+      responses:
+        '200':
+          description: Health snapshot. Inspect `status`; 200 does not imply healthy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+components:
+  headers:
+    ETag:
+      description: Strong validator; a hash of the document content.
+      schema: { type: string }
+    CacheControl:
+      description: Always `public, max-age=60`.
+      schema: { type: string, examples: ['public, max-age=60'] }
+
+  responses:
+    NotModified:
+      description: Content unchanged since the `If-None-Match` value.
+    NotFoundJson:
+      description: No such document.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error, path]
+      properties:
+        error: { type: string, examples: ['not_found'] }
+        path: { type: string }
+
+    Severity:
+      type: string
+      enum: [info, low, medium, high]
+
+    DocumentRef:
+      type: object
+      required: [path, sha256, bytes, generatedAt]
+      properties:
+        path: { type: string }
+        sha256:
+          type: string
+          description: Of the document body; lets a consumer skip a re-parse.
+        bytes: { type: integer }
+        generatedAt: { type: string, format: date-time }
+
+    IndexDocument:
+      type: object
+      required: [schemaVersion, generatedAt, documents]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        documents:
+          type: object
+          description: Every published document, keyed by kind.
+          properties:
+            observers: { $ref: '#/components/schemas/DocumentRef' }
+            findings: { $ref: '#/components/schemas/DocumentRef' }
+            epochs:
+              type: array
+              items: { $ref: '#/components/schemas/DocumentRef' }
+        freshness:
+          type: object
+          description: Age of the capture and analysis cadences at generation time.
+        archive:
+          type: object
+          description: Dated snapshots of earlier generations, when retained.
+
+    SchemaVersion:
+      type: string
+      description: |
+        Contract version of the document. Additive changes keep the version;
+        a breaking change increments the major and is served at a new path.
+      examples: ['1.0.0']
+
+    FindingsWindow:
+      type: object
+      required: [epochs, from, truncated, olderFindingsAt]
+      description: |
+        Declares that the feed is a window rather than the whole history, so a
+        consumer can never mistake one for the other.
+      properties:
+        epochs:
+          type: integer
+          description: Epochs retained. `0` means unwindowed.
+        from:
+          type: [integer, 'null']
+          description: Oldest epoch present.
+        truncated:
+          type: boolean
+          description: True when findings were dropped from this document.
+        olderFindingsAt:
+          type: string
+          description: Where dropped findings remain addressable.
+          examples: ['epochs/<epochIndex>.json']
+
+    PairwiseEntry:
+      type: object
+      description: |
+        One pair from the similarity matrix. `a` and `b` are **indices into the
+        finding's `observers` array**, not addresses.
+      required: [a, b, similarity, hammingBits]
+      properties:
+        a: { type: integer, minimum: 0 }
+        b: { type: integer, minimum: 0 }
+        similarity:
+          type: number
+          description: 1.0 is byte-identical over the meaningful bytes.
+        hammingBits: { type: integer }
+        hammingBytes: { type: integer }
+
+    Finding:
+      type: object
+      required: [id, kind, observers, severity, confidence, detectedAt, summary]
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          description: Detector that produced it.
+          examples: ['shared_report_tx', 'near_identical_results']
+        epochIndex:
+          type: [integer, 'null']
+          description: Null for cross-epoch findings, which describe the window itself.
+        observers:
+          type: array
+          description: Every observer in the finding. Pair indices resolve against this.
+          items: { type: string }
+        observerCount: { type: integer }
+        severity: { $ref: '#/components/schemas/Severity' }
+        confidence:
+          type: number
+          description: Capped at 0.5 while the similarity threshold is uncalibrated.
+        detectedAt: { type: string, format: date-time }
+        summary:
+          type: string
+          description: One sentence stating what the data shows, not what it means.
+        detail:
+          type: object
+          description: |
+            Detector-specific evidence. For similarity kinds this includes
+            `pairsTotal`, `pairsTruncated` and a truncated `pairs` array.
+          properties:
+            pairsTotal:
+              type: integer
+              description: Pairs in the full matrix.
+            pairsTruncated:
+              type: integer
+              description: Pairs omitted from `pairs`.
+            pairs:
+              type: array
+              description: The 20 most-similar pairs. **Not the complete set.**
+              items: { $ref: '#/components/schemas/PairwiseEntry' }
+            minSimilarity: { type: number }
+            maxSimilarity: { type: number }
+            allBlobsDistinct:
+              type: boolean
+              description: |
+                True when no two blobs were byte-identical — the case an
+                equality check would miss entirely.
+
+    FindingsDocument:
+      type: object
+      required: [schemaVersion, generatedAt, calibrated, window, counts, findings]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        detectorVersion: { type: integer }
+        calibrated:
+          type: boolean
+          description: |
+            **Check this first.** While false, `thresholdSimilarity` is a
+            placeholder and similarity findings over-sweep; severity is capped
+            at `medium` and confidence at 0.5.
+        calibrationId: { type: [integer, 'null'] }
+        thresholdSimilarity: { type: number }
+        epochRange:
+          type: [object, 'null']
+          properties:
+            from: { type: integer }
+            to: { type: integer }
+            count: { type: integer }
+        window: { $ref: '#/components/schemas/FindingsWindow' }
+        counts:
+          type: object
+          properties:
+            total: { type: integer }
+            bySeverity:
+              type: object
+              additionalProperties: { type: integer }
+            byKind:
+              type: object
+              additionalProperties: { type: integer }
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/Finding' }
+
+    ObserverRollup:
+      type: object
+      required: [observer, epochsObserved]
+      properties:
+        observer: { type: string, description: Base58 Solana address. }
+        fqdn:
+          type: [string, 'null']
+          description: Gateway hostname from the registry, when known.
+        epochsObserved: { type: integer }
+        firstEpochIndex: { type: integer }
+        lastEpochIndex: { type: integer }
+        distinctReportTxIds: { type: integer }
+        sharedReportEpochs:
+          type: integer
+          description: Epochs where this observer cited a report another also cited.
+        findingCount: { type: integer }
+        maxSeverity: { $ref: '#/components/schemas/Severity' }
+        kinds:
+          type: array
+          items: { type: string }
+
+    ObserversDocument:
+      type: object
+      required: [schemaVersion, generatedAt, observers]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        epochRange:
+          type: [object, 'null']
+          properties:
+            from: { type: integer }
+            to: { type: integer }
+            count: { type: integer }
+        observerCount: { type: integer }
+        observers:
+          type: array
+          items: { $ref: '#/components/schemas/ObserverRollup' }
+        epochs:
+          type: array
+          items: { type: integer }
+
+    Observation:
+      type: object
+      required: [observer, reportTxId, gatewayCount, submittedAt]
+      properties:
+        observer: { type: string }
+        reportTxId:
+          type: string
+          description: |
+            Arweave transaction holding the full report. **Not unique** — several
+            observers can cite the same one, which is itself a signal.
+        gatewayCount: { type: integer }
+        submittedAt:
+          type: integer
+          description: Unix seconds, from chain.
+
+    EpochDocument:
+      type: object
+      required: [schemaVersion, generatedAt, epochIndex, observationCount, observations]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        epochIndex: { type: integer }
+        observationCount: { type: integer }
+        distinctReportTxIds:
+          type: integer
+          description: Fewer than `observationCount` means reports were shared.
+        registryCaptured:
+          type: boolean
+          description: |
+            Whether the gateway registry slot order was captured for this epoch.
+            Without it the results bitmap cannot later be mapped to gateways.
+        registryApproximate: { type: boolean }
+        registryDigest: { type: [string, 'null'] }
+        firstSubmittedAtUnix: { type: [integer, 'null'] }
+        lastSubmittedAtUnix: { type: [integer, 'null'] }
+        observations:
+          type: array
+          items: { $ref: '#/components/schemas/Observation' }
+        findings:
+          type: array
+          description: All findings for this epoch, including any aged out of the feed.
+          items: { $ref: '#/components/schemas/Finding' }
+
+    Health:
+      type: object
+      required: [status, capture]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          description: Aggregate. A 200 response does not imply `ok`.
+        published: { type: boolean }
+        capture:
+          type: object
+          properties:
+            status: { type: string, enum: [ok, anomaly, error] }
+            lastRunAt: { type: string, format: date-time }
+            ageSeconds: { type: integer }
+            stale:
+              type: boolean
+              description: Alert on this — a stalled capture loses epochs permanently.
+            accountCount:
+              type: integer
+              description: |
+                Accounts seen last cycle. Alert on `0`: it means the
+                discriminator stopped matching, which otherwise looks like a
+                quiet network.
+            consecutiveFailures: { type: integer }
+        analysis:
+          type: object
+          properties:
+            status: { type: string }
+            lastRunAt: { type: string, format: date-time }

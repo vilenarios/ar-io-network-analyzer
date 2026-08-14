@@ -5,7 +5,13 @@
 import { writeFileSync, existsSync, mkdirSync } from 'fs';
 import type { GatewayAnalysis, CentralizationReport } from '../types.js';
 
-export function generateCSV(results: GatewayAnalysis[]): string {
+/**
+ * Build the CSV body.
+ *
+ * Split out from {@link generateCSV} so the publisher can emit the same bytes
+ * without writing to `reports/`. The column order is unchanged.
+ */
+export function buildCSV(results: GatewayAnalysis[]): string {
   const csvLines: string[] = [
     // Header
     'fqdn,wallet,stake,status,baseDomain,domainPattern,domainGroupSize,ipAddress,ipRange,' +
@@ -63,17 +69,26 @@ export function generateCSV(results: GatewayAnalysis[]): string {
     ].map(escapeCSV).join(','));
   });
   
-  const csv = csvLines.join('\n');
-  
+  return csvLines.join('\n');
+}
+
+/** Build the summary JSON body. Same bytes {@link generateJSON} writes. */
+export function buildSummaryJSON(report: CentralizationReport): string {
+  return JSON.stringify(report, null, 2);
+}
+
+export function generateCSV(results: GatewayAnalysis[]): string {
+  const csv = buildCSV(results);
+
   // Create reports directory if it doesn't exist
   const reportsDir = 'reports';
   if (!existsSync(reportsDir)) {
     mkdirSync(reportsDir, { recursive: true });
   }
-  
+
   const filename = `reports/gateway-centralization-${new Date().toISOString().split('T')[0]}.csv`;
   writeFileSync(filename, csv);
-  
+
   return filename;
 }
 
@@ -83,9 +98,9 @@ export function generateJSON(report: CentralizationReport): string {
   if (!existsSync(reportsDir)) {
     mkdirSync(reportsDir, { recursive: true });
   }
-  
+
   const filename = `reports/gateway-centralization-summary-${new Date().toISOString().split('T')[0]}.json`;
-  writeFileSync(filename, JSON.stringify(report, null, 2));
+  writeFileSync(filename, buildSummaryJSON(report));
   return filename;
 }
 

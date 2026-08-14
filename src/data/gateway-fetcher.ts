@@ -3,21 +3,28 @@
  */
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
+import { safeHost, scrubSecrets } from '../utils/runtime.js';
 
-async function initSolanaArio() {
+/**
+ * Build the SDK client.
+ *
+ * `SOLANA_RPC_URL` may carry a provider token, so the URL is read here and
+ * never returned or logged — callers get the client and, at most, the host.
+ */
+export async function initSolanaArio() {
   const { ARIO, MAINNET_RPC_URL } = await import('@ar.io/sdk');
   const { createSolanaRpc } = await import('@solana/kit');
   const rpcUrl = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL;
   const rpc = createSolanaRpc(rpcUrl);
-  return { ario: ARIO.init({ rpc }), rpcUrl };
+  return { ario: ARIO.init({ rpc }), rpc, host: safeHost(rpcUrl) };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise<{ gateways: Gateway[], totalFetched: number }> {
   try {
-    const { ario, rpcUrl } = await initSolanaArio();
-    console.log(`Fetching all gateways from AR.IO Solana network (rpc: ${rpcUrl})...`);
+    const { ario, host } = await initSolanaArio();
+    console.log(`Fetching all gateways from AR.IO Solana network (rpc host: ${host})...`);
     const pageDelayMs = parseInt(process.env.SOLANA_PAGE_DELAY_MS || '500');
 
     const gateways: Gateway[] = [];
@@ -45,7 +52,10 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
           attempt++;
           if (attempt > 5) throw err;
           const backoff = Math.min(8000, 1000 * 2 ** attempt);
-          console.log(`  Retry ${attempt}/5 in ${backoff}ms (${(err as Error).message?.slice(0, 80)})`);
+          // scrubSecrets, not `.message`: a malformed SOLANA_RPC_URL (a pasted
+          // provider URL missing its scheme is the common case) makes fetch
+          // throw with the whole URL — token included — inside the message.
+          console.log(`  Retry ${attempt}/5 in ${backoff}ms (${scrubSecrets(err).slice(0, 120)})`);
           await sleep(backoff);
         }
       }
@@ -82,7 +92,9 @@ export async function fetchGatewaysFromNetwork(_config: AnalyzerConfig): Promise
     return { gateways, totalFetched };
 
   } catch (error) {
-    console.error('Error fetching from AR.IO network:', error);
+    // Never the raw error: its message, and its `cause` chain, routinely echo
+    // the endpoint URL and therefore the provider token.
+    console.error('Error fetching from AR.IO network:', scrubSecrets(error));
     throw new Error('Failed to fetch gateways from network. Please ensure @ar.io/sdk is installed.');
   }
 }
@@ -119,7 +131,7 @@ export async function fetchDistributions(epochIndex?: number): Promise<{ rewards
     
     return distributions as any;
   } catch (error) {
-    console.error('Error fetching distributions:', error);
+    console.error('Error fetching distributions:', scrubSecrets(error));
     return null;
   }
 }

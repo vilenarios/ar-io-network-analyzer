@@ -3,12 +3,64 @@
  */
 
 import type { CentralizationReport, GatewayAnalysis } from '../types.js';
+import type { Finding } from '../observers/types.js';
+
+/** Minimal escaping for observer-independence values rendered into the body. */
+function escapeHtmlText(value: unknown): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Alias used at the many table-cell interpolation sites below. */
+const esc = escapeHtmlText;
+
+/**
+ * Serialize data into a `<script>` block safely.
+ *
+ * Two distinct escapes, both required:
+ *
+ *  1. `JSON.stringify` does NOT escape `</script>`, so any string field could
+ *     terminate the script element and open a new one. The output-level
+ *     `<` -> `\u003c` (plus U+2028/9) rewrite closes that.
+ *  2. Every string in this payload is later interpolated into client-side
+ *     `innerHTML` templates, and step 1 does not help there — `\u003c` is just
+ *     `<` again by the time the browser has parsed the script. So the strings
+ *     themselves are HTML-escaped first. `innerHTML` renders `&lt;` back to a
+ *     literal `<`, so nothing legitimate changes on screen.
+ *
+ * This matters because the payload is not trustworthy: `isp` / `org` / `city`
+ * come from a plaintext-HTTP geo lookup (anyone on-path can choose them) and
+ * `fqdn` comes from on-chain gateway settings. Since this branch also SERVES
+ * the report over HTTP on the same origin as the API, an injection here is
+ * stored XSS rather than a local-file curiosity.
+ */
+function jsonForScript(value: unknown): string {
+  const scrub = (input: unknown): unknown => {
+    if (typeof input === 'string') {
+      return input.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    if (Array.isArray(input)) return input.map(scrub);
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(Object.entries(input).map(([key, v]) => [key, scrub(v)]));
+    }
+    return input;
+  };
+
+  return JSON.stringify(scrub(value))
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
 
 export function generateHTMLReport(
   summary: CentralizationReport,
   csvData: GatewayAnalysis[],
   csvFilename: string,
-  jsonFilename: string
+  jsonFilename: string,
+  findings: Finding[] = []
 ): string {
   const migrationByFqdn = new Map<string, GatewayAnalysis>();
   for (const g of csvData) migrationByFqdn.set(g.fqdn, g);
@@ -1050,6 +1102,7 @@ export function generateHTMLReport(
             <button class="tab" onclick="switchTab('performance')">Performance</button>
             <button class="tab" onclick="switchTab('detailed')">Detailed Analysis</button>
             <button class="tab" onclick="switchTab('clusters')">Cluster Analysis</button>
+            ${findings.length > 0 ? '<button class="tab" onclick="switchTab(\'observers\')">Observers</button>' : ''}
             ${summary.economicImpact ? '<button class="tab" onclick="switchTab(\'economic\')">Economic Impact</button>' : ''}
         </div>
 
@@ -1090,7 +1143,9 @@ export function generateHTMLReport(
                     <div class="info-icon">?</div>
                     <div class="tooltip">Number of unique gateway clusters identified. Each cluster represents gateways that may be controlled by the same operator.</div>
                 </div>
-                ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0 ? `
+                ${
+                  summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
+                    ? `
                 <div class="stat-card">
                     <h3>Unique Countries</h3>
                     <div class="value">${summary.infrastructureImpact.uniqueCountries}</div>
@@ -1100,7 +1155,7 @@ export function generateHTMLReport(
                 </div>
                 <div class="stat-card">
                     <h3>Unique ISPs</h3>
-                    <div class="value">${summary.infrastructureImpact.uniqueIsps}</div>
+                    <div class="value">${esc(summary.infrastructureImpact.uniqueIsps)}</div>
                     <div class="subtitle">Service providers</div>
                     <div class="info-icon">?</div>
                     <div class="tooltip">Number of unique Internet Service Providers. More ISP diversity reduces single points of failure.</div>
@@ -1112,8 +1167,12 @@ export function generateHTMLReport(
                     <div class="info-icon">?</div>
                     <div class="tooltip">Percentage of gateways hosted in commercial datacenters vs residential/business ISPs. Some datacenter hosting is normal for reliability.</div>
                 </div>
-                ` : ''}
-                ${summary.economicImpact ? `
+                `
+                    : ''
+                }
+                ${
+                  summary.economicImpact
+                    ? `
                 <div class="stat-card">
                     <h3>Epoch Rewards</h3>
                     <div class="value">${Math.round(summary.economicImpact.totalDistributedRewards / 1e6).toLocaleString()} $ARIO</div>
@@ -1121,19 +1180,27 @@ export function generateHTMLReport(
                     <div class="info-icon">?</div>
                     <div class="tooltip">Total $ARIO rewards distributed to gateways this epoch. Rewards incentivize gateway operators to maintain uptime and performance.</div>
                 </div>
-                ` : ''}
-                ${summary.versionStats ? `
+                `
+                    : ''
+                }
+                ${
+                  summary.versionStats
+                    ? `
                 <div class="stat-card">
                     <h3>Top Gateway Version</h3>
-                    <div class="value" style="font-size: 1.4rem;">${summary.versionStats.topVersion ?? '—'}</div>
+                    <div class="value" style="font-size: 1.4rem;">${esc(summary.versionStats.topVersion ?? '—')}</div>
                     <div class="subtitle">${summary.versionStats.topVersionCount}/${summary.versionStats.totalReporting} reporting (${summary.versionStats.topVersionPercentage.toFixed(1)}%) · ${summary.versionStats.distribution.length} unique</div>
                     <div class="info-icon">?</div>
                     <div class="tooltip">Most common AR.IO gateway version reported via /ar-io/info. High concentration on one version is healthy (operators upgrading); a wide spread of old versions is a stagnation signal.</div>
                 </div>
-                ` : ''}
+                `
+                    : ''
+                }
             </div>
 
-            ${summary.migrationStats?.checked ? `
+            ${
+              summary.migrationStats?.checked
+                ? `
             <div class="migration-panel">
                 <h2>🔗 Solana Migration Progress</h2>
                 <div class="panel-subtitle">Gateway operators who have completed the AR.IO → Solana migration on-chain.</div>
@@ -1152,7 +1219,9 @@ export function generateHTMLReport(
                     </div>
                 </div>
             </div>
-            ` : ''}
+            `
+                : ''
+            }
 
             <div class="charts-grid">
                 <div class="chart-card">
@@ -1167,7 +1236,9 @@ export function generateHTMLReport(
                         <canvas id="overviewDomainsChart"></canvas>
                     </div>
                 </div>
-                ${summary.infrastructureImpact && summary.infrastructureImpact.uniqueCountries > 0 ? `
+                ${
+                  summary.infrastructureImpact && summary.infrastructureImpact.uniqueCountries > 0
+                    ? `
                 <div class="chart-card">
                     <h2>Geographic Distribution</h2>
                     <div style="height: 300px;">
@@ -1180,15 +1251,21 @@ export function generateHTMLReport(
                         <canvas id="overviewProvidersChart"></canvas>
                     </div>
                 </div>
-                ` : ''}
-                ${summary.versionStats ? `
+                `
+                    : ''
+                }
+                ${
+                  summary.versionStats
+                    ? `
                 <div class="chart-card">
                     <h2>Gateway Version Distribution</h2>
                     <div style="height: 300px;">
                         <canvas id="overviewVersionChart"></canvas>
                     </div>
                 </div>
-                ` : ''}
+                `
+                    : ''
+                }
             </div>
 
             <div class="chart-card" style="margin-top: 20px; position: relative;">
@@ -1232,7 +1309,7 @@ export function generateHTMLReport(
                         (gateway, index) => `
                         <tr data-score="${gateway.score}">
                             <td>${index + 1}</td>
-                            <td>${gateway.fqdn}</td>
+                            <td>${esc(gateway.fqdn)}</td>
                             <td>${gateway.score.toFixed(3)}</td>
                             <td>
                                 <span class="score-badge ${
@@ -1366,12 +1443,12 @@ export function generateHTMLReport(
                 </div>
                 <div class="stat-card">
                     <h3>Top Provider</h3>
-                    <div class="value">${summary.infrastructureImpact.topProviders[0]?.name || 'N/A'}</div>
+                    <div class="value">${esc(summary.infrastructureImpact.topProviders[0]?.name || 'N/A')}</div>
                     <div class="subtitle">${summary.infrastructureImpact.topProviders[0]?.count || 0} gateways</div>
                 </div>
                 <div class="stat-card">
                     <h3>Top Country</h3>
-                    <div class="value">${summary.infrastructureImpact.countryDistribution[0]?.country || 'N/A'}</div>
+                    <div class="value">${esc(summary.infrastructureImpact.countryDistribution[0]?.country || 'N/A')}</div>
                     <div class="subtitle">${summary.infrastructureImpact.countryDistribution[0]?.count || 0} gateways (${summary.infrastructureImpact.countryDistribution[0]?.percentage.toFixed(1) || '0'}%)</div>
                 </div>
                 <div class="stat-card">
@@ -1450,7 +1527,7 @@ export function generateHTMLReport(
                             return `
                             <tr>
                                 <td>${index + 1}</td>
-                                <td>${provider.name}</td>
+                                <td>${esc(provider.name)}</td>
                                 <td>${provider.count}</td>
                                 <td>
                                     <span class="score-badge ${
@@ -1494,8 +1571,8 @@ export function generateHTMLReport(
                             (country, index) => `
                             <tr>
                                 <td>${index + 1}</td>
-                                <td>${country.country}</td>
-                                <td>${country.countryCode}</td>
+                                <td>${esc(country.country)}</td>
+                                <td>${esc(country.countryCode)}</td>
                                 <td>${country.count}</td>
                                 <td>
                                     <span class="score-badge ${
@@ -1545,13 +1622,13 @@ export function generateHTMLReport(
                       .map(
                         (gateway) => `
                         <tr>
-                            <td>${gateway.fqdn}</td>
-                            <td>${gateway.wallet.substring(0, 8)}...</td>
+                            <td>${esc(gateway.fqdn)}</td>
+                            <td>${esc(gateway.wallet.substring(0, 8))}...</td>
                             <td>${gateway.stake.toLocaleString()}</td>
-                            <td>${gateway.baseDomain}</td>
-                            <td>${gateway.domainPattern}</td>
-                            <td>${gateway.ipRange}</td>
-                            <td>${gateway.clusterId || '-'}</td>
+                            <td>${esc(gateway.baseDomain)}</td>
+                            <td>${esc(gateway.domainPattern)}</td>
+                            <td>${esc(gateway.ipRange)}</td>
+                            <td>${esc(gateway.clusterId || '-')}</td>
                             <td>
                                 <span class="score-badge ${
                                   gateway.overallCentralization > 0.7
@@ -1578,7 +1655,7 @@ export function generateHTMLReport(
               .map(
                 (cluster, idx) => `
                 <div class="cluster-details">
-                    <h3>#${idx + 1}: ${cluster.baseDomain} Cluster</h3>
+                    <h3>#${idx + 1}: ${esc(cluster.baseDomain)} Cluster</h3>
                     <div class="cluster-stats">
                         <div class="cluster-stat">
                             <div class="cluster-stat-label">Cluster ID</div>
@@ -1630,6 +1707,54 @@ export function generateHTMLReport(
         </div>
 
         ${
+          findings.length > 0
+            ? `
+        <div id="observers-content" class="tab-content">
+            <h2>Observer Independence</h2>
+            <p style="margin-bottom: 20px;">
+                ${findings.length} finding${findings.length === 1 ? '' : 's'} from on-chain observation
+                accounts. Similarity findings are capped at <strong>medium</strong> severity until the
+                threshold is calibrated — see <code>yarn observers:calibrate</code>.
+            </p>
+            <table id="observersTable">
+                <thead>
+                    <tr>
+                        <th>Kind</th>
+                        <th>Epoch</th>
+                        <th>Severity</th>
+                        <th>Confidence</th>
+                        <th>Observers</th>
+                        <th>Summary</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${findings
+                      .map(
+                        (finding) => `
+                    <tr>
+                        <td>${escapeHtmlText(finding.kind.replace(/_/g, ' '))}</td>
+                        <td>${finding.epochIndex === null ? 'all' : escapeHtmlText(finding.epochIndex)}</td>
+                        <td><span class="score-badge ${
+                          finding.severity === 'high'
+                            ? 'score-high'
+                            : finding.severity === 'medium'
+                              ? 'score-medium'
+                              : 'score-low'
+                        }">${escapeHtmlText(finding.severity)}</span></td>
+                        <td>${finding.confidence.toFixed(2)}</td>
+                        <td title="${escapeHtmlText(finding.observers.join(', '))}">${finding.observers.length}</td>
+                        <td>${escapeHtmlText(finding.summary)}</td>
+                    </tr>`
+                      )
+                      .join('')}
+                </tbody>
+            </table>
+        </div>
+        `
+            : ''
+        }
+
+        ${
           summary.economicImpact
             ? `
         <div id="economic-content" class="tab-content">
@@ -1670,7 +1795,7 @@ export function generateHTMLReport(
                             return `
                             <tr>
                                 <td>${index + 1}</td>
-                                <td>${clusterInfo?.baseDomain || '-'}</td>
+                                <td>${esc(clusterInfo?.baseDomain || '-')}</td>
                                 <td>${cluster.gatewayCount}</td>
                                 <td>${Math.round(cluster.clusterRewards / 1e6).toLocaleString()}</td>
                                 <td>
@@ -1777,11 +1902,11 @@ export function generateHTMLReport(
                           (gw, idx) => `
                             <tr>
                                 <td>${idx + 1}</td>
-                                <td><a href="https://${gw.fqdn}" target="_blank">${gw.fqdn}</a></td>
+                                <td><a href="https://${esc(gw.fqdn)}" target="_blank">${esc(gw.fqdn)}</a></td>
                                 <td><span class="score-badge ${gw.responseTime < 300 ? 'score-low' : gw.responseTime < 600 ? 'score-medium' : 'score-high'}">${gw.responseTime}ms</span></td>
                                 <td>${gw.serverHeader || 'N/A'}</td>
-                                <td>${gw.httpVersion || 'N/A'}</td>
-                                <td>${gw.country || 'N/A'}</td>
+                                <td>${esc(gw.httpVersion || 'N/A')}</td>
+                                <td>${esc(gw.country || 'N/A')}</td>
                             </tr>
                         `
                         )
@@ -1926,7 +2051,7 @@ export function generateHTMLReport(
 
             // Top centralized domains chart
             const topDomains = {};
-            ${JSON.stringify(csvData)}.forEach(gw => {
+            ${jsonForScript(csvData)}.forEach(gw => {
                 if (gw.clusterId && gw.clusterId.startsWith('domain-')) {
                     topDomains[gw.baseDomain] = (topDomains[gw.baseDomain] || 0) + 1;
                 }
@@ -1960,7 +2085,7 @@ export function generateHTMLReport(
             // Geographic distribution chart
             const geoCtx = document.getElementById('overviewGeoChart')?.getContext('2d');
             if (geoCtx && !overviewGeoChart) {
-                const countryData = ${JSON.stringify(summary.infrastructureImpact?.countryDistribution?.slice(0, 10) || [])};
+                const countryData = ${jsonForScript(summary.infrastructureImpact?.countryDistribution?.slice(0, 10) || [])};
                 overviewGeoChart = new Chart(geoCtx, {
                     type: 'bar',
                     data: {
@@ -1986,7 +2111,7 @@ export function generateHTMLReport(
             // Top providers chart
             const providersCtx = document.getElementById('overviewProvidersChart')?.getContext('2d');
             if (providersCtx && !overviewProvidersChart) {
-                const providerData = ${JSON.stringify(summary.infrastructureImpact?.topProviders?.slice(0, 10) || [])};
+                const providerData = ${jsonForScript(summary.infrastructureImpact?.topProviders?.slice(0, 10) || [])};
                 overviewProvidersChart = new Chart(providersCtx, {
                     type: 'bar',
                     data: {
@@ -2012,7 +2137,7 @@ export function generateHTMLReport(
             // Version distribution chart
             const versionCtx = document.getElementById('overviewVersionChart')?.getContext('2d');
             if (versionCtx && !overviewVersionChart) {
-                const versionData = ${JSON.stringify(summary.versionStats?.distribution.slice(0, 10) || [])};
+                const versionData = ${jsonForScript(summary.versionStats?.distribution.slice(0, 10) || [])};
                 overviewVersionChart = new Chart(versionCtx, {
                     type: 'bar',
                     data: {
@@ -2042,13 +2167,15 @@ export function generateHTMLReport(
         function initClusterGraph() {
             if (clusterCy) return;
 
-            const clusterData = ${JSON.stringify(summary.clusters.map(c => ({
-              id: c.id,
-              size: c.size,
-              avgScore: c.avgScore,
-              baseDomain: c.baseDomain,
-              pattern: c.pattern
-            })))};
+            const clusterData = ${jsonForScript(
+              summary.clusters.map((c) => ({
+                id: c.id,
+                size: c.size,
+                avgScore: c.avgScore,
+                baseDomain: c.baseDomain,
+                pattern: c.pattern,
+              }))
+            )};
 
             if (clusterData.length === 0) {
                 document.getElementById('clusterGraph').innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-muted);">No clusters detected - network appears well-distributed.</div>';
@@ -2138,7 +2265,7 @@ export function generateHTMLReport(
         ${
           summary.infrastructureImpact && summary.infrastructureImpact.uniqueIsps > 0
             ? `
-        const infrastructureData = ${JSON.stringify(summary.infrastructureImpact)};
+        const infrastructureData = ${jsonForScript(summary.infrastructureImpact)};
 
         // Hosting Type Pie Chart
         const hostingTypeCtx = document.getElementById('hostingTypeChart')?.getContext('2d');
@@ -2204,7 +2331,7 @@ export function generateHTMLReport(
         const tldCtx = document.getElementById('tldChart')?.getContext('2d');
         if (tldCtx) {
             // Calculate TLD distribution from gateway data
-            const gateways = ${JSON.stringify(csvData)};
+            const gateways = ${jsonForScript(csvData)};
             const tldCounts = {};
 
             gateways.forEach(g => {
@@ -2283,7 +2410,7 @@ export function generateHTMLReport(
 
         const responseTimeCtx = document.getElementById('responseTimeChart')?.getContext('2d');
         if (responseTimeCtx) {
-            const responseTimes = ${JSON.stringify(csvData)}
+            const responseTimes = ${jsonForScript(csvData)}
                 .map(gw => gw.responseTime)
                 .filter(rt => rt && rt > 0);
 
@@ -2325,7 +2452,7 @@ export function generateHTMLReport(
         const serverSoftwareCtx = document.getElementById('serverSoftwareChart')?.getContext('2d');
         if (serverSoftwareCtx) {
             const servers = {};
-            ${JSON.stringify(csvData)}.forEach(gw => {
+            ${jsonForScript(csvData)}.forEach(gw => {
                 if (gw.serverHeader && gw.serverHeader !== 'N/A') {
                     const server = gw.serverHeader.split('/')[0].toLowerCase();
                     servers[server] = (servers[server] || 0) + 1;
@@ -2368,7 +2495,7 @@ export function generateHTMLReport(
         const httpVersionCtx = document.getElementById('httpVersionChart')?.getContext('2d');
         if (httpVersionCtx) {
             const versions = {};
-            ${JSON.stringify(csvData)}.forEach(gw => {
+            ${jsonForScript(csvData)}.forEach(gw => {
                 if (gw.httpVersion && gw.httpVersion !== 'N/A') {
                     versions[gw.httpVersion] = (versions[gw.httpVersion] || 0) + 1;
                 }
@@ -2399,7 +2526,7 @@ export function generateHTMLReport(
         const certIssuerCtx = document.getElementById('certIssuerChart')?.getContext('2d');
         if (certIssuerCtx) {
             const issuers = {};
-            ${JSON.stringify(csvData)}.forEach(gw => {
+            ${jsonForScript(csvData)}.forEach(gw => {
                 if (gw.certIssuer && gw.certIssuer !== 'N/A') {
                     issuers[gw.certIssuer] = (issuers[gw.certIssuer] || 0) + 1;
                 }
@@ -2600,7 +2727,7 @@ export function generateHTMLReport(
             if (myGlobe) return; // Already initialized
 
             // Prepare gateway data for globe
-            const gateways = ${JSON.stringify(csvData)};
+            const gateways = ${jsonForScript(csvData)};
             globeData = gateways
                 .filter(g => g.latitude && g.longitude)
                 .map(g => ({

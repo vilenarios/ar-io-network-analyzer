@@ -1,4 +1,14 @@
 /**
+ * NOTE ON TRUST: this module talks to ip-api.com over PLAINTEXT HTTP (the free
+ * tier offers nothing else). Every field it returns — `isp`, `org`, `city`,
+ * `country` — is therefore chosen by whoever is on-path, not by the gateway.
+ * Those values are rendered into the HTML report, which this branch also
+ * SERVES over HTTP, so they are escaped at the rendering boundary
+ * (`esc()` / `jsonForScript()` in utils/html-generator.ts). Treat everything
+ * below as untrusted input, not as facts.
+ */
+
+/**
  * Geographic location and ISP detection utilities
  */
 

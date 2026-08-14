@@ -1,0 +1,36 @@
+[Unit]
+Description=AR.IO observation capture (ar-io-network-analyzer)
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vilenarios
+Group=vilenarios
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+# .env is verified systemd-safe (strict KEY=VALUE, no spaces, no quoting).
+# The yarn scripts also pass --env-file-if-exists, so this is belt-and-braces.
+EnvironmentFile=/programs/ar-io-network-analyzer/.env
+# systemd does not inherit a login PATH; nvm's node/yarn must be named explicitly.
+Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn capture
+
+# Capture missing an epoch is permanent data loss, so always come back.
+Restart=always
+RestartSec=15
+# SIGTERM lets an in-flight cycle reach COMMIT before exit.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/capture.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/capture.log
+
+# It holds no keys and signs nothing; give it nothing it does not need.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
