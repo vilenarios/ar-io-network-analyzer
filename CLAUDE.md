@@ -266,6 +266,54 @@ in `docs/observer-independence.md`; operations in `docs/operations.md`.
   `jsonForScript()`. `isp`/`org`/`city` come from a plaintext-HTTP geo lookup
   and `fqdn` comes from on-chain settings; both are attacker-influenced.
 
+### Gotchas found during first bring-up (2026-08-14)
+
+Each of these cost real time. None are visible from reading the code alone.
+
+- **Nothing loads `.env`.** There is no `dotenv` dependency; every entry point
+  reads `process.env` directly. The npm scripts pass node's own
+  `--env-file-if-exists=.env`, which is what makes a manual run pick up
+  `SOLANA_RPC_URL`. Add that flag to any new entry point, or it will silently
+  fall back to the SDK's public `MAINNET_RPC_URL` and get rate-limited under
+  continuous polling. The systemd unit works either way because it uses
+  `EnvironmentFile`.
+- **`yarn build` does not typecheck `test/`.** `tsconfig.json` sets
+  `rootDir: src` and `include: src/**`, and `tsx` strips types at runtime, so a
+  test can reference a field that does not exist and still pass. That happened:
+  an XSS test built its fixture with `org` when the field is `asnOrg`, so
+  `asnOrg` was silently uncovered by the test that appeared to cover it. Run
+  `yarn typecheck` (`tsconfig.test.json`) — that is what catches it.
+- **`.gitignore` has a blanket `*.json`.** Any new checked-in JSON config needs
+  an explicit `!` exception, or `git add` refuses it and the file is silently
+  absent from the commit. `tsconfig.test.json` needed one.
+- **The protocol caps observers per epoch at 50** (`EpochSettings.maxObservers`).
+  That bounds every pairwise detector at 1225 pairs, so similarity compute is a
+  non-issue — but it also bounds the *payload*, which is why the published pair
+  list is capped (below).
+- **Two published documents are deliberately incomplete, and say so.** Findings
+  publish the 20 most-similar pairs with `pairsTotal`/`pairsTruncated`, and
+  `findings.json` carries a rolling window (`FINDINGS_FEED_EPOCHS`, default 30)
+  with a `window` object on the wire. Both were unbounded: the full matrix
+  reached ~220 KiB per finding at the observer cap, in a document that
+  accumulated every epoch (~235 MiB projected at three years). Do not "fix" them
+  by removing the caps. Older findings stay addressable at
+  `epochs/<index>.json`, and the full matrix is reproducible from the stored
+  blobs.
+- **`docs/openapi.yaml` is guarded by a parity test.** `test/openapi-parity.test.ts`
+  asserts both directions — every documented path is served, every served path is
+  documented. Add a route without documenting it and the suite fails. It parses
+  path keys by regex because the repo has no YAML dependency.
+- **Capture is supervised by systemd**, not pm2. `deploy/arns-observer-capture.service`
+  carries the real paths. pm2 is installed on this host but under node 16, and
+  `pm2 startup` needs sudo anyway, so it buys nothing. A user-level systemd unit
+  is not viable either: `Linger=no`.
+- **A missed capture cycle is permanent.** `close_observation` is permissionless,
+  so the network reclaims accounts regardless of local retention settings. This
+  is why `Restart=always` matters more here than in a typical service, and why
+  the alert should fire on `capture.stale` **and** on `accountCount == 0` — a
+  zero count means the discriminator stopped matching, which otherwise looks
+  exactly like a quiet network.
+
 ## Dependencies
 
 - `@ar.io/sdk` - AR.IO network SDK for gateway data
