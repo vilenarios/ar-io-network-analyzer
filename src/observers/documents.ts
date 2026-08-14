@@ -110,12 +110,55 @@ export function buildObserversDocument(
   };
 }
 
+/**
+ * Epochs of findings carried in the rolling feed.
+ *
+ * Without a window this document grows without bound: it is regenerated with
+ * every finding ever produced, so at the protocol's 50-observer cap it would
+ * reach tens of MiB within a year and a portal would fetch all of it to render
+ * a dashboard. Older findings remain addressable per epoch via
+ * `epochs/<index>.json`, which is naturally bounded, so nothing is lost —
+ * only the feed is trimmed.
+ *
+ * Override with FINDINGS_FEED_EPOCHS; 0 disables the window.
+ */
+export const DEFAULT_FINDINGS_FEED_EPOCHS = 30;
+
+function findingsFeedEpochs(): number {
+  const raw = process.env.FINDINGS_FEED_EPOCHS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_FINDINGS_FEED_EPOCHS;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : DEFAULT_FINDINGS_FEED_EPOCHS;
+}
+
 export function buildFindingsDocument(
   findings: Finding[],
   epochs: EpochSnapshot[],
   config: DetectorConfig
 ): FindingsDocument {
-  const { bySeverity, byKind } = countFindings(findings);
+  const windowSize = findingsFeedEpochs();
+
+  // Window by epoch, not by finding count, so an epoch is never half-present.
+  let windowed = findings;
+  let windowFrom: number | null = null;
+  if (windowSize > 0 && findings.length > 0) {
+    // Cross-epoch detector kinds may carry a null epochIndex; those are
+    // never windowed out, since they describe the window itself.
+    const present = [
+      ...new Set(
+        findings
+          .map((f) => f.epochIndex)
+          .filter((e): e is number => typeof e === 'number')
+      ),
+    ].sort((a, b) => b - a);
+    const kept = new Set(present.slice(0, windowSize));
+    windowFrom = kept.size > 0 ? Math.min(...kept) : null;
+    windowed = findings.filter(
+      (f) => typeof f.epochIndex !== 'number' || kept.has(f.epochIndex)
+    );
+  }
+
+  const { bySeverity, byKind } = countFindings(windowed);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -125,7 +168,15 @@ export function buildFindingsDocument(
     calibrationId: config.calibrationId,
     thresholdSimilarity: config.similarityThreshold,
     epochRange: epochRange(epochs),
-    counts: { total: findings.length, bySeverity, byKind },
-    findings: rankFindings(findings).map(toPublishedFinding),
+    // Stated explicitly so a consumer can tell a windowed feed from a
+    // complete one, and knows where to look for the remainder.
+    window: {
+      epochs: windowSize,
+      from: windowFrom,
+      truncated: windowed.length < findings.length,
+      olderFindingsAt: 'epochs/<epochIndex>.json',
+    },
+    counts: { total: windowed.length, bySeverity, byKind },
+    findings: rankFindings(windowed).map(toPublishedFinding),
   };
 }

@@ -17,6 +17,12 @@ import type { Detector, DetectorContext, Finding } from '../types.js';
 import { makeFinding } from '../finding.js';
 import { connectedComponents, maskedDigest, pairwiseMatrix } from '../hamming.js';
 
+/**
+ * Pairs published per finding. The full matrix is reproducible from the
+ * stored blobs; this bounds the served document, which accumulates epochs.
+ */
+const PUBLISHED_PAIR_LIMIT = 20;
+
 export const nearIdenticalResultsDetector: Detector = {
   kind: 'near_identical_results',
   requiresDecodedResults: false,
@@ -94,13 +100,34 @@ export const nearIdenticalResultsDetector: Detector = {
             allBlobsDistinct:
               new Set(observations.map((o) => digests.get(o.observer))).size ===
               observations.length,
-            pairs: componentPairs.map((pair) => ({
-              a: pair.a.observer,
-              b: pair.b.observer,
-              similarity: pair.result.similarity,
-              hammingBits: pair.result.hammingBits,
-              hammingBytes: pair.result.hammingBytes,
-            })),
+            // The published matrix is capped. Pair count is O(n^2) in the
+            // epoch's observer count, which the protocol caps at 50 -> 1225
+            // pairs: ~19 KiB for the 15-observer component seen in epoch 511,
+            // and ~220 KiB at the protocol maximum, inside a document that
+            // accumulates across epochs.
+            //
+            // The tightest pairs are the evidence; the rest is bulk. Keep the
+            // most-similar PUBLISHED_PAIR_LIMIT and state how many were
+            // dropped, so an excerpt can never be mistaken for the whole set.
+            // `observers` above already lists every member, and the full
+            // matrix stays reproducible from the stored blobs.
+            pairsTotal: componentPairs.length,
+            pairsTruncated: Math.max(
+              0,
+              componentPairs.length - PUBLISHED_PAIR_LIMIT,
+            ),
+            pairs: [...componentPairs]
+              .sort((x, y) => y.result.similarity - x.result.similarity)
+              .slice(0, PUBLISHED_PAIR_LIMIT)
+              .map((pair) => ({
+                // Indices into `observers` rather than repeating two 43-char
+                // base58 keys on every pair.
+                a: component.indexOf(pair.a.observer),
+                b: component.indexOf(pair.b.observer),
+                similarity: pair.result.similarity,
+                hammingBits: pair.result.hammingBits,
+                hammingBytes: pair.result.hammingBytes,
+              })),
           },
           now: ctx.now,
         })

@@ -174,3 +174,43 @@ test('a single observation produces no findings at all', () => {
     assert.deepEqual(detector.run(context(epoch)), [], `${detector.kind} fired on one observation`);
   }
 });
+
+// --- published payload is bounded -------------------------------------------
+// The pairwise matrix is O(n^2) in an epoch's observer count (protocol cap 50
+// => 1225 pairs). Before the cap, one 15-observer component published ~19 KiB
+// of pairs inside a document that accumulated every epoch. These assert the
+// bound holds, and that truncation is disclosed rather than silent.
+test('near_identical_results caps published pairs and reports the truncation', () => {
+  const n = 12; // 66 pairs, comfortably over the limit of 20
+  const observations = Array.from({ length: n }, (_, i) => {
+    const results = blob(0xff);
+    results[i % MEANINGFUL_BYTES] ^= 0x01; // near-identical, one bit apart
+    return observationRecord({
+      observer: `obs${String(i).padStart(2, '0')}`,
+      gatewayResults: results,
+      reportTxId: `tx${i}`,
+    });
+  });
+
+  const [finding] = nearIdenticalResultsDetector.run(context(epochSnapshot(observations)));
+  assert.ok(finding, 'expected a near_identical_results finding');
+
+  const pairs = finding.detail.pairs as Array<{ a: number; b: number; similarity: number }>;
+  assert.ok(pairs.length <= 20, `published ${pairs.length} pairs, expected <= 20`);
+  assert.equal(finding.detail.pairsTotal, (n * (n - 1)) / 2);
+  assert.equal(
+    finding.detail.pairsTruncated,
+    (finding.detail.pairsTotal as number) - pairs.length
+  );
+
+  // Indices into `observers`, not repeated 43-char keys.
+  for (const pair of pairs) {
+    assert.equal(typeof pair.a, 'number');
+    assert.ok(finding.observers[pair.a] !== undefined, 'pair index must resolve');
+    assert.ok(finding.observers[pair.b] !== undefined, 'pair index must resolve');
+  }
+
+  // The excerpt must be the strongest evidence, not an arbitrary slice.
+  const sims = pairs.map((pair) => pair.similarity);
+  assert.deepEqual(sims, [...sims].sort((x, y) => y - x));
+});

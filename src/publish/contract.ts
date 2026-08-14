@@ -222,6 +222,21 @@ export interface FindingsDocument {
   calibrationId: number | null;
   thresholdSimilarity: number;
   epochRange: { from: number; to: number; count: number } | null;
+  /**
+   * The feed carries a rolling window of epochs, not all history. Stated on
+   * the wire so a consumer can distinguish a windowed feed from a complete
+   * one, and knows where the remainder lives.
+   */
+  window: {
+    /** Epochs retained; 0 means unwindowed. */
+    epochs: number;
+    /** Oldest epoch present, or null when there is nothing to window. */
+    from: number | null;
+    /** True when findings were dropped from this document. */
+    truncated: boolean;
+    /** Where the dropped findings remain addressable. */
+    olderFindingsAt: string;
+  };
   counts: {
     total: number;
     bySeverity: Record<Severity, number>;
