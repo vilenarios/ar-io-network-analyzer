@@ -209,8 +209,8 @@ sqlite3 data/observations.sqlite ".backup '/backups/observations-$(date -u +%F).
 ```
 
 Daily is sufficient (epochs are 24h) but hourly costs nothing at this size —
-the store grows by roughly 15 KB/epoch of observations plus ~170 KB of registry
-slot order per epoch.
+the store grows by roughly 15 KB/epoch of observations, ~170 KB of registry
+slot order per epoch, and ~11 KB/epoch of Epoch-account metadata.
 
 Retention: keep everything. The whole point is the longitudinal record; a
 `persistent_correlation` finding needs many epochs and a calibration needs at
@@ -220,7 +220,31 @@ What is safe to delete: `public/`, `reports/`, `findings`,
 `finding_observers`, and `poll_runs` rows (auto-pruned after
 `POLL_RUN_RETENTION_DAYS`, default 30). What is never safe to delete:
 `observations`, `observation_revisions`, `registry_snapshots`,
-`registry_slots`, `raw_unparsed`.
+`registry_slots`, `raw_unparsed`, `epochs`.
+
+### The `epochs` table
+
+One row per epoch, captured from the on-chain Epoch account. It holds the
+reward economics (`total_eligible_rewards`, `per_gateway_reward`,
+`per_observer_reward`, `reward_rate`) and — more importantly — the protocol's
+own tallied verdict:
+
+- `failure_counts` — a raw little-endian `Uint16Array(3000)` blob, indexed by
+  gateway **registry slot**, not by address. Join against `registry_slots` for
+  the same epoch to resolve a slot to a gateway. Read it back with
+  `new Uint16Array(blob.buffer, blob.byteOffset, blob.byteLength / 2)`.
+- `has_observed` — a 7-byte bitmap over the 50 prescribed observers, LSB-first.
+  Its popcount equals `observations_submitted`, which makes it a free integrity
+  check on any row.
+- `prescribed_observers`, `prescribed_observer_gateways`,
+  `prescribed_name_hashes` — JSON arrays; the name hashes are hex-encoded.
+
+This table is why the gateway no longer needs a raised `CRANK_EPOCH_RETENTION`.
+`close_epoch` is permissionless and the effective on-chain retention is the
+MINIMUM across every cranker in the network, so no operator can hold epochs
+open — the only durable record is the one captured here before the account is
+reclaimed. Capture must be running continuously for that to hold; a multi-day
+capture outage loses those epochs permanently.
 
 ## 7. Health check reference
 

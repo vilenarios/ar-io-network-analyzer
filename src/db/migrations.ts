@@ -190,6 +190,55 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_poll_status ON poll_runs(status, started_at DESC)`,
     ],
   },
+  {
+    version: 3,
+    name: 'epoch-accounts',
+    statements: [
+      // The Epoch account holds the reward economics AND the tallied network
+      // verdict: failure_counts is the per-gateway failure tally the protocol
+      // itself computed, and has_observed is the bitmap of which prescribed
+      // observers actually submitted. None of it survives close_epoch, and
+      // close_epoch is permissionless — no operator controls how long it
+      // stays readable. Capturing it here is what makes it safe to stop
+      // trying to hold epochs open on chain.
+      //
+      // Keyed on epoch_index alone: exactly one Epoch account per epoch,
+      // unlike observations which are per (epoch, observer).
+      `CREATE TABLE IF NOT EXISTS epochs (
+        epoch_index                  INTEGER PRIMARY KEY,
+        start_timestamp              INTEGER,
+        end_timestamp                INTEGER,
+        total_eligible_rewards       INTEGER,
+        per_gateway_reward           INTEGER,
+        per_observer_reward          INTEGER,
+        reward_rate                  INTEGER,
+        active_gateway_count         INTEGER,
+        observer_count               INTEGER,
+        name_count                   INTEGER,
+        observations_submitted       INTEGER,
+        rewards_distributed          INTEGER,
+        weights_tallied              INTEGER,
+        prescriptions_done           INTEGER,
+        distribution_index           INTEGER,
+        tally_index                  INTEGER,
+        -- Uint16Array(3000) little-endian: the protocol's own failure tally,
+        -- indexed by gateway registry slot. Join against registry_slots for
+        -- the same epoch to resolve a slot to a gateway.
+        failure_counts               BLOB,
+        -- 7-byte bitmap over the prescribed observers, LSB-first.
+        has_observed                 BLOB,
+        prescribed_observers         TEXT,
+        prescribed_observer_gateways TEXT,
+        prescribed_name_hashes       TEXT,
+        account_bytes                INTEGER NOT NULL,
+        first_seen_at                INTEGER NOT NULL,
+        last_seen_at                 INTEGER NOT NULL,
+        first_seen_slot              INTEGER,
+        last_seen_slot               INTEGER
+      ) STRICT`,
+      `CREATE INDEX IF NOT EXISTS idx_epochs_seen ON epochs(last_seen_at DESC)`,
+    ],
+  },
 ];
 
 /**

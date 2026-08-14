@@ -10,6 +10,7 @@
 import { createHash } from 'crypto';
 import type { Database } from 'better-sqlite3';
 import type { DecodedObservation, RegistrySnapshot } from '../observers/types.js';
+import type { DecodedEpoch } from '../capture/decode.js';
 
 export interface UpsertResult {
   inserted: number;
@@ -231,6 +232,129 @@ export function duplicateObservationKeys(records: DecodedObservation[]): string[
  * gateways join and leave — without this the captured bitmaps become
  * permanently undecodable.
  */
+export interface EpochUpsertResult {
+  inserted: number;
+  updated: number;
+  stale: number;
+}
+
+/**
+ * Record the Epoch accounts seen in one poll.
+ *
+ * An Epoch account is mutable while its epoch is live — tally_index and
+ * observations_submitted advance, then rewards_distributed flips — so this is
+ * last-write-wins on every mutable field, with first_seen_at preserved.
+ *
+ * The `last_seen_slot` guard is the same one the observation path uses: an RPC
+ * node that has fallen behind must not overwrite a newer capture with an older
+ * view of the same account.
+ */
+export function upsertEpochs(
+  db: Database,
+  records: DecodedEpoch[],
+  seenAt: number,
+  seenSlot: number
+): EpochUpsertResult {
+  const result: EpochUpsertResult = { inserted: 0, updated: 0, stale: 0 };
+
+  const statement = db.prepare(
+    `INSERT INTO epochs (
+       epoch_index, start_timestamp, end_timestamp,
+       total_eligible_rewards, per_gateway_reward, per_observer_reward, reward_rate,
+       active_gateway_count, observer_count, name_count,
+       observations_submitted, rewards_distributed, weights_tallied, prescriptions_done,
+       distribution_index, tally_index,
+       failure_counts, has_observed,
+       prescribed_observers, prescribed_observer_gateways, prescribed_name_hashes,
+       account_bytes, first_seen_at, last_seen_at, first_seen_slot, last_seen_slot
+     ) VALUES (
+       @epochIndex, @startTimestamp, @endTimestamp,
+       @totalEligibleRewards, @perGatewayReward, @perObserverReward, @rewardRate,
+       @activeGatewayCount, @observerCount, @nameCount,
+       @observationsSubmitted, @rewardsDistributed, @weightsTallied, @prescriptionsDone,
+       @distributionIndex, @tallyIndex,
+       @failureCounts, @hasObserved,
+       @prescribedObservers, @prescribedObserverGateways, @prescribedNameHashes,
+       @accountBytes, @seenAt, @seenAt, @seenSlot, @seenSlot
+     )
+     ON CONFLICT(epoch_index) DO UPDATE SET
+       start_timestamp              = excluded.start_timestamp,
+       end_timestamp                = excluded.end_timestamp,
+       total_eligible_rewards       = excluded.total_eligible_rewards,
+       per_gateway_reward           = excluded.per_gateway_reward,
+       per_observer_reward          = excluded.per_observer_reward,
+       reward_rate                  = excluded.reward_rate,
+       active_gateway_count         = excluded.active_gateway_count,
+       observer_count               = excluded.observer_count,
+       name_count                   = excluded.name_count,
+       observations_submitted       = excluded.observations_submitted,
+       rewards_distributed          = excluded.rewards_distributed,
+       weights_tallied              = excluded.weights_tallied,
+       prescriptions_done           = excluded.prescriptions_done,
+       distribution_index           = excluded.distribution_index,
+       tally_index                  = excluded.tally_index,
+       failure_counts               = excluded.failure_counts,
+       has_observed                 = excluded.has_observed,
+       prescribed_observers         = excluded.prescribed_observers,
+       prescribed_observer_gateways = excluded.prescribed_observer_gateways,
+       prescribed_name_hashes       = excluded.prescribed_name_hashes,
+       account_bytes                = excluded.account_bytes,
+       last_seen_at                 = excluded.last_seen_at,
+       last_seen_slot               = excluded.last_seen_slot
+     WHERE excluded.last_seen_slot >= epochs.last_seen_slot`
+  );
+
+  const exists = db.prepare('SELECT 1 FROM epochs WHERE epoch_index = ?');
+
+  for (const record of records) {
+    const { epoch } = record;
+    const seenBefore = exists.get(epoch.epochIndex) !== undefined;
+
+    const info = statement.run({
+      epochIndex: epoch.epochIndex,
+      startTimestamp: epoch.startTimestamp,
+      endTimestamp: epoch.endTimestamp,
+      totalEligibleRewards: epoch.totalEligibleRewards,
+      perGatewayReward: epoch.perGatewayReward,
+      perObserverReward: epoch.perObserverReward,
+      rewardRate: epoch.rewardRate,
+      activeGatewayCount: epoch.activeGatewayCount,
+      observerCount: epoch.observerCount,
+      nameCount: epoch.nameCount,
+      observationsSubmitted: epoch.observationsSubmitted,
+      rewardsDistributed: epoch.rewardsDistributed,
+      weightsTallied: epoch.weightsTallied,
+      prescriptionsDone: epoch.prescriptionsDone,
+      distributionIndex: epoch.distributionIndex,
+      tallyIndex: epoch.tallyIndex,
+      failureCounts: Buffer.from(
+        epoch.failureCounts.buffer,
+        epoch.failureCounts.byteOffset,
+        epoch.failureCounts.byteLength
+      ),
+      hasObserved: Buffer.from(
+        epoch.hasObserved.buffer,
+        epoch.hasObserved.byteOffset,
+        epoch.hasObserved.byteLength
+      ),
+      prescribedObservers: JSON.stringify(epoch.prescribedObservers),
+      prescribedObserverGateways: JSON.stringify(epoch.prescribedObserverGateways),
+      prescribedNameHashes: JSON.stringify(
+        epoch.prescribedNameHashes.map((hash) => Buffer.from(hash).toString('hex'))
+      ),
+      accountBytes: record.accountBytes,
+      seenAt,
+      seenSlot,
+    });
+
+    if (info.changes === 0) result.stale++;
+    else if (seenBefore) result.updated++;
+    else result.inserted++;
+  }
+
+  return result;
+}
+
 export function insertRegistrySlots(db: Database, snapshot: RegistrySnapshot): void {
   db.prepare(
     `INSERT OR REPLACE INTO registry_snapshots

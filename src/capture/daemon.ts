@@ -27,6 +27,7 @@ import {
   insertRegistrySlots,
   prunePollRuns,
   startPollRun,
+  upsertEpochs,
   upsertObservations,
   type PollRunOutcome,
 } from '../db/repo-write.js';
@@ -34,10 +35,17 @@ import { consecutiveFailedPollRuns, latestPollRun } from '../db/repo-read.js';
 import { acquireCaptureLock, type CaptureLock } from './lock.js';
 import {
   assertDiscriminatorMatchesSdk,
+  decodeEpochAccount,
   decodeObservationAccount,
   loadSdkDecoder,
+  type DecodedEpoch,
 } from './decode.js';
-import { createRpcClient, fetchDiscriminatorOnlyCount, fetchObservationAccounts } from './rpc.js';
+import {
+  createRpcClient,
+  fetchDiscriminatorOnlyCount,
+  fetchEpochAccounts,
+  fetchObservationAccounts,
+} from './rpc.js';
 import { fetchRegistrySlotOrder } from './registry.js';
 import { classifyCycle, type CycleClassification } from './status.js';
 import type { DecodedObservation, RegistrySnapshot } from '../observers/types.js';
@@ -222,6 +230,26 @@ async function runCycle(
       }
     }
 
+    // The Epoch account is the only on-chain record of the tallied failure
+    // counts and the reward economics, and `close_epoch` is permissionless —
+    // whatever is readable now is all there will ever be. Best-effort and
+    // outside the transaction for the same reason as the registry snapshot:
+    // a failure here must never cost us the observations this cycle decoded.
+    const decodedEpochs: DecodedEpoch[] = [];
+    try {
+      const epochAccounts = await fetchEpochAccounts(client);
+      for (const account of epochAccounts.accounts) {
+        const outcome = decodeEpochAccount(account);
+        if (outcome.ok) decodedEpochs.push(outcome.value);
+        else log('warn', `⚠️  epoch account ${account.pubkey} did not decode: ${outcome.reason}`);
+      }
+      if (epochAccounts.accounts.length === 0) {
+        log('warn', '⚠️  zero Epoch accounts matched — check for an account layout change');
+      }
+    } catch (error) {
+      log('warn', `⚠️  epoch account capture failed: ${scrubSecrets(error)} (retry next cycle)`);
+    }
+
     const finishedAt = Date.now();
     let result = { inserted: 0, updated: 0, revisions: 0, stale: 0, duplicateKeys: 0 };
     let repeatedUnparsed = 0;
@@ -243,6 +271,16 @@ async function runCycle(
         if (outcome === 'repeated') repeatedUnparsed++;
       }
       for (const snapshot of registrySnapshots) insertRegistrySlots(db, snapshot);
+        if (decodedEpochs.length > 0) {
+          const epochResult = upsertEpochs(db, decodedEpochs, finishedAt, contextSlot);
+          if (epochResult.inserted > 0 || epochResult.updated > 0) {
+            log(
+              'info',
+              `🗓️  epochs: ${epochResult.inserted} new, ${epochResult.updated} updated` +
+                (epochResult.stale > 0 ? `, ${epochResult.stale} refused as stale` : '')
+            );
+          }
+        }
 
       const classified = classifyCycle({
         accountCount: accounts.length,

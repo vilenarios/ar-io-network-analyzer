@@ -118,10 +118,46 @@ function sdkDeserialize(data: Buffer): SdkObservation {
   return sdkDeserializeImpl(data);
 }
 
-/** Load the SDK decoder once at startup so decoding itself stays synchronous. */
+/**
+ * The Epoch account as the SDK decodes it. Every scalar is a plain number —
+ * the reward amounts are well under 2^53, so no bigint handling is needed.
+ */
+export interface SdkEpoch {
+  epochIndex: number;
+  startTimestamp: number;
+  endTimestamp: number;
+  totalEligibleRewards: number;
+  perGatewayReward: number;
+  perObserverReward: number;
+  rewardRate: number;
+  activeGatewayCount: number;
+  distributionIndex: number;
+  tallyIndex: number;
+  observerCount: number;
+  nameCount: number;
+  observationsSubmitted: number;
+  rewardsDistributed: number;
+  weightsTallied: number;
+  prescriptionsDone: number;
+  failureCounts: Uint16Array;
+  hasObserved: Uint8Array;
+  prescribedObservers: string[];
+  prescribedObserverGateways: string[];
+  prescribedNameHashes: Buffer[];
+}
+
+let sdkDeserializeEpochImpl: ((data: Buffer) => SdkEpoch) | null = null;
+
+/** Load the SDK decoders once at startup so decoding itself stays synchronous. */
 export async function loadSdkDecoder(): Promise<void> {
-  const { deserializeObservation } = await import('@ar.io/sdk');
+  const { deserializeObservation, deserializeEpoch } = await import('@ar.io/sdk');
   sdkDeserializeImpl = deserializeObservation as (data: Buffer) => SdkObservation;
+  sdkDeserializeEpochImpl = deserializeEpoch as unknown as (data: Buffer) => SdkEpoch;
+}
+
+/** Install an epoch decoder directly. Tests use this; see {@link useSdkDecoder}. */
+export function useSdkEpochDecoder(impl: ((data: Buffer) => SdkEpoch) | null): void {
+  sdkDeserializeEpochImpl = impl;
 }
 
 /**
@@ -187,4 +223,50 @@ async function loadGeneratedDiscriminator(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** A decoded Epoch account, flattened for storage. */
+export interface DecodedEpoch {
+  pubkey: string;
+  accountBytes: number;
+  epoch: SdkEpoch;
+}
+
+export type EpochDecodeOutcome =
+  | { ok: true; value: DecodedEpoch }
+  | { ok: false; reason: string };
+
+/**
+ * Decode one Epoch account.
+ *
+ * Deliberately thinner than {@link decodeObservationAccount}: an Epoch account
+ * is written only by the program itself, so there is no adversarial observer
+ * to guard against — the only realistic failure is a layout change, which the
+ * `dataSize` filter on the fetch already turns into a zero-result. What is
+ * left is to not let one malformed account abort the whole poll.
+ */
+export function decodeEpochAccount(account: RawObservationAccount): EpochDecodeOutcome {
+  if (!sdkDeserializeEpochImpl) {
+    return { ok: false, reason: 'epoch-decoder-not-loaded' };
+  }
+
+  let epoch: SdkEpoch;
+  try {
+    epoch = sdkDeserializeEpochImpl(account.data);
+  } catch (error) {
+    return { ok: false, reason: `decode-threw: ${(error as Error).message}` };
+  }
+
+  if (!Number.isInteger(epoch.epochIndex) || epoch.epochIndex < 0) {
+    return { ok: false, reason: `bad-epoch-index: ${String(epoch.epochIndex)}` };
+  }
+
+  return {
+    ok: true,
+    value: {
+      pubkey: account.pubkey,
+      accountBytes: account.data.length,
+      epoch,
+    },
+  };
 }

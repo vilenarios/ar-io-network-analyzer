@@ -16,6 +16,14 @@ export const OBSERVATION_DISCRIMINATOR_B58 = 'KMfZcioTTQV';
 /** Fixed on-chain size of an Observation account. */
 export const OBSERVATION_ACCOUNT_BYTES = 469;
 
+/**
+ * The Epoch account: one per epoch, holding the reward economics and the
+ * prescription record. sha256('account:Epoch')[0..8) in base58.
+ */
+export const EPOCH_DISCRIMINATOR_B58 = 'GcP27J5iCGs';
+
+export const EPOCH_ACCOUNT_BYTES = 9408;
+
 /** Retry policy: the SDK defaults (3 attempts / 10s cap) are too tight for a 10-minute cadence. */
 export const CAPTURE_RETRY_OPTIONS = {
   maxAttempts: 5,
@@ -129,6 +137,49 @@ export async function fetchObservationAccounts(client: RpcClient): Promise<Progr
               memcmp: {
                 offset: 0n,
                 bytes: OBSERVATION_DISCRIMINATOR_B58,
+                encoding: 'base58',
+              },
+            },
+          ],
+        })
+        .send(),
+    CAPTURE_RETRY_OPTIONS
+  );
+
+  return {
+    contextSlot: toSlot(response.context.slot),
+    accounts: response.value.map((entry) => ({
+      pubkey: entry.pubkey,
+      data: Buffer.from(entry.account.data[0], 'base64'),
+    })),
+  };
+}
+
+/**
+ * One call returns every live Epoch account.
+ *
+ * Same two-filter contract as the observation fetch — `dataSize` turns a
+ * layout change into a visible zero-result rather than a silent mis-decode.
+ *
+ * Unlike observations, Epoch accounts are reclaimed by a permissionless
+ * `close_epoch`, so whatever is on chain at poll time is all that will ever
+ * be available. This capture is the durable record.
+ */
+export async function fetchEpochAccounts(client: RpcClient): Promise<ProgramAccountsResult> {
+  const { withRetry } = await import('@ar.io/sdk');
+
+  const response = await withRetry(
+    () =>
+      client.rpc
+        .getProgramAccounts(client.programId, {
+          encoding: 'base64',
+          withContext: true,
+          filters: [
+            { dataSize: BigInt(EPOCH_ACCOUNT_BYTES) },
+            {
+              memcmp: {
+                offset: 0n,
+                bytes: EPOCH_DISCRIMINATOR_B58,
                 encoding: 'base58',
               },
             },
