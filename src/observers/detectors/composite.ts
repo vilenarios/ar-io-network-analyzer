@@ -25,6 +25,12 @@ const FAMILY_BY_KIND: Partial<Record<FindingKind, Family>> = {
   shared_asn: 'network',
   analyzer_cluster_overlap: 'network',
   co_submission_timing: 'timing',
+  // divergent_assessment is deliberately ABSENT. Every family above is
+  // evidence that observers may be the SAME actor; composite correlates them
+  // into an independence risk. Divergence is the opposite signal — observers
+  // that disagree by 20 points are demonstrably not one another — so folding
+  // it in here would raise an independence score using evidence of
+  // independence. It is a measurement-quality finding, not a collusion one.
 };
 
 export const compositeDetector: Detector = {

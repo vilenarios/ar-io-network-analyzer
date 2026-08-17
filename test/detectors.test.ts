@@ -51,13 +51,20 @@ function context(epoch: EpochSnapshot, overrides: Partial<DetectorContext> = {})
   };
 }
 
-test('every v1 detector treats the result blob as opaque bytes', () => {
-  assert.equal(DETECTORS.length, 12);
+// Detectors that legitimately read bitmap CONTENT rather than comparing bytes.
+// Deliberately an allowlist, not a count: a detector that starts interpreting
+// the bitmap without being added here is exactly the drift worth catching,
+// because content-reading detectors inherit assumptions (bit polarity, registry
+// size) that byte-comparison ones are immune to.
+const CONTENT_READING_KINDS = new Set(['divergent_assessment']);
+
+test('only the declared content-reading detectors interpret the result blob', () => {
+  assert.equal(DETECTORS.length, 13);
   for (const detector of DETECTORS) {
     assert.equal(
       detector.requiresDecodedResults,
-      false,
-      `${detector.kind} must not claim to interpret the bitmap`
+      CONTENT_READING_KINDS.has(detector.kind),
+      `${detector.kind} disagrees with the content-reading allowlist`
     );
   }
   assert.equal(EPOCH_DETECTORS.length + WINDOW_DETECTORS.length, DETECTORS.length);
