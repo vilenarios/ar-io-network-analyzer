@@ -87,6 +87,25 @@ interface SolanaRpcLike {
       dataSlice?: { offset: number; length: number };
     }
   ): { send(): Promise<RpcResponse<EncodedAccount | null>> };
+
+  getSignaturesForAddress(
+    address: string,
+    config: { limit: number; before?: string }
+  ): { send(): Promise<SignatureEntry[]> };
+
+  getTransaction(
+    signature: string,
+    config: { maxSupportedTransactionVersion: 0; encoding: 'json' }
+  ): { send(): Promise<TransactionEntry | null> };
+}
+
+interface SignatureEntry {
+  signature: string;
+  blockTime: bigint | number | null;
+}
+
+interface TransactionEntry {
+  transaction: { message: { accountKeys: readonly string[] } };
 }
 
 export interface RpcClient {
@@ -244,4 +263,79 @@ export async function fetchAccount(client: RpcClient, address: string) {
     contextSlot: toSlot(response.context.slot),
     data: response.value ? Buffer.from(response.value.data[0], 'base64') : null,
   };
+}
+
+/** The creating transaction for an account, as recovered from its signature history. */
+export interface AccountCreation {
+  creator: string;
+  createdAt: number;
+}
+
+/**
+ * Recover who paid to create an account, from the OLDEST signature on it.
+ *
+ * The fee payer of an account's first transaction is the wallet that funded
+ * its rent. This is only correct while the full history is inside the RPC
+ * node's retention window -- if the oldest page is truncated we would read
+ * some later transaction as the creation and attribute it to the wrong
+ * wallet, so bail out rather than record a plausible-looking lie.
+ *
+ * Called once per epoch (creation never changes), not once per cycle.
+ */
+export async function fetchAccountCreation(
+  client: RpcClient,
+  address: string
+): Promise<AccountCreation | null> {
+  const { withRetry } = await import('@ar.io/sdk');
+  const PAGE = 1000;
+  const MAX_PAGES = 10;
+
+  let before: string | undefined;
+  let oldest: SignatureEntry | undefined;
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const batch = await withRetry(
+      () =>
+        client.rpc
+          .getSignaturesForAddress(address, {
+            limit: PAGE,
+            ...(before !== undefined ? { before } : {}),
+          })
+          .send(),
+      CAPTURE_RETRY_OPTIONS
+    );
+    if (batch.length === 0) break;
+    oldest = batch[batch.length - 1];
+    if (batch.length < PAGE) {
+      before = undefined;
+      break;
+    }
+    before = oldest!.signature;
+    // Still a full page on the last allowed iteration: history is deeper than
+    // we are willing to walk, so we cannot know which tx was the creation.
+    if (page === MAX_PAGES - 1) return null;
+  }
+
+  if (!oldest) return null;
+
+  const tx = await withRetry(
+    () =>
+      client.rpc
+        .getTransaction(oldest!.signature, {
+          maxSupportedTransactionVersion: 0,
+          encoding: 'json',
+        })
+        .send(),
+    CAPTURE_RETRY_OPTIONS
+  );
+  if (!tx) return null;
+
+  const keys = tx.transaction.message.accountKeys;
+  const creator = keys?.[0];
+  const blockTime = oldest.blockTime;
+  if (typeof creator !== 'string' || blockTime === null || blockTime === undefined) {
+    return null;
+  }
+
+  return { creator, createdAt: Number(blockTime) };
 }

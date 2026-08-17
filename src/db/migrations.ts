@@ -239,6 +239,28 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_epochs_seen ON epochs(last_seen_at DESC)`,
     ],
   },
+  {
+    version: 4,
+    name: 'epoch-provenance',
+    statements: [
+      // Who paid to create each epoch. `CreateEpoch` costs ~0.066 SOL and the
+      // refund goes to whoever CLOSES the epoch, not whoever created it -- so
+      // the creator is subsidising the closer. This node only creates when no
+      // one else has (its crank reaches the create step ~16 min after the
+      // boundary, while other crankers get there in ~8), but that delay is an
+      // emergent property of the pipeline backlog, not a configured one. If
+      // the backlog ever shrinks this node silently starts paying again.
+      //
+      // Recording the creator turns that from an invisible balance drift into
+      // something observable. Resolved once per epoch (it never changes), via
+      // the oldest signature on the Epoch PDA.
+      `ALTER TABLE epochs ADD COLUMN pubkey TEXT`,
+      `ALTER TABLE epochs ADD COLUMN created_by TEXT`,
+      `ALTER TABLE epochs ADD COLUMN created_at INTEGER`,
+      `ALTER TABLE epochs ADD COLUMN create_lag_seconds INTEGER`,
+    ],
+  }
+
 ];
 
 /**

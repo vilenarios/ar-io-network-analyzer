@@ -266,7 +266,7 @@ export function upsertEpochs(
        distribution_index, tally_index,
        failure_counts, has_observed,
        prescribed_observers, prescribed_observer_gateways, prescribed_name_hashes,
-       account_bytes, first_seen_at, last_seen_at, first_seen_slot, last_seen_slot
+       account_bytes, first_seen_at, last_seen_at, first_seen_slot, last_seen_slot, pubkey
      ) VALUES (
        @epochIndex, @startTimestamp, @endTimestamp,
        @totalEligibleRewards, @perGatewayReward, @perObserverReward, @rewardRate,
@@ -275,7 +275,7 @@ export function upsertEpochs(
        @distributionIndex, @tallyIndex,
        @failureCounts, @hasObserved,
        @prescribedObservers, @prescribedObserverGateways, @prescribedNameHashes,
-       @accountBytes, @seenAt, @seenAt, @seenSlot, @seenSlot
+       @accountBytes, @seenAt, @seenAt, @seenSlot, @seenSlot, @pubkey
      )
      ON CONFLICT(epoch_index) DO UPDATE SET
        start_timestamp              = excluded.start_timestamp,
@@ -299,6 +299,7 @@ export function upsertEpochs(
        prescribed_observer_gateways = excluded.prescribed_observer_gateways,
        prescribed_name_hashes       = excluded.prescribed_name_hashes,
        account_bytes                = excluded.account_bytes,
+       pubkey                       = excluded.pubkey,
        last_seen_at                 = excluded.last_seen_at,
        last_seen_slot               = excluded.last_seen_slot
      WHERE excluded.last_seen_slot >= epochs.last_seen_slot`
@@ -343,6 +344,7 @@ export function upsertEpochs(
         epoch.prescribedNameHashes.map((hash) => Buffer.from(hash).toString('hex'))
       ),
       accountBytes: record.accountBytes,
+      pubkey: record.pubkey,
       seenAt,
       seenSlot,
     });
@@ -353,6 +355,44 @@ export function upsertEpochs(
   }
 
   return result;
+}
+
+/**
+ * Record who paid to create an epoch. Written once — creation never changes,
+ * and `WHERE created_by IS NULL` keeps a re-resolve from churning the row.
+ */
+export function setEpochCreator(
+  db: Database,
+  epochIndex: number,
+  creator: string,
+  createdAt: number
+): boolean {
+  const info = db
+    .prepare(
+      `UPDATE epochs
+          SET created_by = ?,
+              created_at = ?,
+              create_lag_seconds = ? - start_timestamp
+        WHERE epoch_index = ? AND created_by IS NULL`
+    )
+    .run(creator, createdAt, createdAt, epochIndex);
+  return info.changes > 0;
+}
+
+/** Epochs whose creator has not been resolved yet, oldest first. */
+export function epochsMissingCreator(db: Database, limit: number): {
+  epochIndex: number;
+  pubkey: string;
+}[] {
+  return db
+    .prepare(
+      `SELECT epoch_index AS epochIndex, pubkey
+         FROM epochs
+        WHERE created_by IS NULL AND pubkey IS NOT NULL
+        ORDER BY epoch_index ASC
+        LIMIT ?`
+    )
+    .all(limit) as { epochIndex: number; pubkey: string }[];
 }
 
 export function insertRegistrySlots(db: Database, snapshot: RegistrySnapshot): void {
