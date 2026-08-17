@@ -59,6 +59,7 @@ export interface EpochSnapshot {
 }
 
 export type FindingKind =
+  | 'divergent_assessment'
   | 'shared_report_tx'
   | 'identical_results'
   | 'near_identical_results'

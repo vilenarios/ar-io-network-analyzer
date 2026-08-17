@@ -4,7 +4,8 @@
  * Order matters: #11 (composite) and #12 (persistent) consume the output of
  * everything before them, so they must run last. Every v1 detector has
  * `requiresDecodedResults: false` — the result bitmap is compared as bytes and
- * never interpreted.
+ * never interpreted. #13 (divergent_assessment) is the first exception: it
+ * reads bitmap DENSITY, so it declares `requiresDecodedResults: true`.
  */
 
 import type { Detector } from '../types.js';
@@ -22,6 +23,7 @@ import { clusterOverlapDetector } from './cluster-overlap.js';
 import { unmatchedObserverDetector } from './unmatched-observer.js';
 import { compositeDetector } from './composite.js';
 import { persistentDetector } from './persistent.js';
+import { divergentAssessmentDetector } from './divergent-assessment.js';
 
 /** Bump to force a full recompute of the findings window. */
 export const DETECTOR_VERSION = 1;
@@ -47,6 +49,7 @@ export const DETECTORS: Detector[] = [
   sharedAsnDetector,
   clusterOverlapDetector,
   unmatchedObserverDetector,
+  divergentAssessmentDetector,
   compositeDetector,
   persistentDetector,
 ];

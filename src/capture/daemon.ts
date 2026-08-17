@@ -27,6 +27,8 @@ import {
   insertRegistrySlots,
   prunePollRuns,
   startPollRun,
+  epochsMissingCreator,
+  setEpochCreator,
   upsertEpochs,
   upsertObservations,
   type PollRunOutcome,
@@ -43,6 +45,7 @@ import {
 import {
   createRpcClient,
   fetchDiscriminatorOnlyCount,
+  fetchAccountCreation,
   fetchEpochAccounts,
   fetchObservationAccounts,
 } from './rpc.js';
@@ -135,6 +138,61 @@ export function epochsNeedingRegistry(
  * One capture cycle. Catches everything: a cycle must never kill the process.
  * Worst case is a single lost 10-minute sample against a multi-day window.
  */
+/**
+ * Resolve the creator of one not-yet-attributed epoch per cycle.
+ *
+ * Best-effort, fire-and-forget, and deliberately outside the write
+ * transaction: this is bookkeeping, and walking signature history is far more
+ * expensive than the account reads the cycle depends on. A failure here must
+ * never cost us the capture.
+ */
+function resolveEpochCreators(
+  db: Database,
+  client: Awaited<ReturnType<typeof createRpcClient>>,
+  state: DaemonState
+): void {
+  void state;
+  let pending: { epochIndex: number; pubkey: string }[];
+  try {
+    pending = epochsMissingCreator(db, 1);
+  } catch (error) {
+    log('warn', `\u26a0\ufe0f  could not list epochs missing a creator: ${scrubSecrets(error)}`);
+    return;
+  }
+  if (pending.length === 0) return;
+
+  const target = pending[0];
+  void (async () => {
+    try {
+      const creation = await fetchAccountCreation(client, target.pubkey);
+      if (creation === null) {
+        log(
+          'warn',
+          `\u26a0\ufe0f  could not attribute epoch ${target.epochIndex} creation ` +
+            `(signature history truncated); will retry next cycle`
+        );
+        return;
+      }
+      if (!setEpochCreator(db, target.epochIndex, creation.creator, creation.createdAt)) return;
+
+      const self = process.env.OPERATOR_WALLET;
+      if (self !== undefined && self === creation.creator) {
+        log(
+          'warn',
+          `\ud83d\udcb8 THIS NODE created epoch ${target.epochIndex} \u2014 ~0.066 SOL of rent ` +
+            `whose refund goes to whoever closes the epoch, not to us. Other crankers ` +
+            `normally get there first; check whether the crank is now reaching the ` +
+            `create step sooner than ~16 min after the epoch boundary.`
+        );
+      } else {
+        log('info', `\ud83e\uddfe epoch ${target.epochIndex} created by ${creation.creator}`);
+      }
+    } catch (error) {
+      log('warn', `\u26a0\ufe0f  epoch ${target.epochIndex} creator lookup failed: ${scrubSecrets(error)}`);
+    }
+  })();
+}
+
 async function runCycle(
   db: Database,
   client: Awaited<ReturnType<typeof createRpcClient>>,
@@ -304,6 +362,14 @@ async function runCycle(
       if (runId !== null) finishPollRun(db, runId, startedAt, finishedAt, outcome);
       return classified;
     });
+
+    // Tripwire: who PAID to create each epoch. CreateEpoch costs ~0.066 SOL and
+    // the refund goes to whoever CLOSES the epoch, so creating is a subsidy to
+    // the closer. This node is normally beaten to it -- but only because its
+    // crank reaches the create step ~16 min after the boundary while other
+    // crankers get there in ~8. That delay is an emergent property of the
+    // pipeline backlog, not a configured one, so it can disappear silently.
+    resolveEpochCreators(db, client, state);
 
     const classification: CycleClassification = safeWrite('cycle commit', () =>
       commit.immediate()

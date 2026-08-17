@@ -62,6 +62,29 @@ yarn observers:findings    # recompute + publish findings (no network access)
 yarn serve                 # read-only HTTP server for public/
 ```
 
+#### What it looks for
+
+Most detectors ask whether observers are too **alike** — sharing a report
+transaction, producing near-identical bitmaps, sitting on the same
+infrastructure. `divergent_assessment` asks the opposite question: whether they
+are too **different**.
+
+Each observer's bitmap has one bit per gateway, so its density summarises that
+observer's verdict on the whole registry. Observers assessing the same
+gateways over the same 24 hours should spread continuously around some
+network-wide truth. A clean gap between two tight groups does not describe a
+network — it describes two different measuring instruments.
+
+Mainnet epochs 512–515 showed exactly that: one population at ~54% and another
+at ~74%, with nobody in between, and the low group draining into the high one
+(10 → 5 → 4 observers) as the high group filled (6 → 14 → 17). Observers that
+held station on both sides rule out a simple degradation story; this is a
+version or configuration change propagating through the observer set.
+
+Both readings matter for centralization. Observers that agree because they run
+identical software are not independent witnesses, and observers that disagree
+by twenty points cannot all be right.
+
 #### Why capture must run continuously
 
 `close_observation` on the AR.IO program is **permissionless**: observation

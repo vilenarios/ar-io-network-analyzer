@@ -19,7 +19,11 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { upsertEpochs } from '../src/db/repo-write.js';
+import {
+  epochsMissingCreator,
+  setEpochCreator,
+  upsertEpochs,
+} from '../src/db/repo-write.js';
 import { memoryDb } from './helpers.js';
 import type { DecodedEpoch, SdkEpoch } from '../src/capture/decode.js';
 
@@ -181,4 +185,46 @@ test('several epochs in one cycle are each keyed separately', () => {
     }[]).map((r) => r.epoch_index),
     [508, 509, 510]
   );
+});
+
+test('the creator is recorded once and never overwritten', () => {
+  const db = memoryDb();
+  upsertEpochs(db, [epochAccount()], 1000, 500);
+
+  const start = (readEpoch(db)!.start_timestamp as unknown) as number;
+  assert.equal(setEpochCreator(db, 511, 'CreatorA', start + 940), true);
+
+  const row = readEpoch(db)!;
+  assert.equal(row.created_by, 'CreatorA');
+  assert.equal(row.create_lag_seconds, 940, 'lag is measured from the epoch start');
+
+  // A re-resolve must not churn the row or reattribute it.
+  assert.equal(setEpochCreator(db, 511, 'CreatorB', start + 10), false);
+  assert.equal(readEpoch(db)!.created_by, 'CreatorA');
+});
+
+test('epochsMissingCreator returns only unattributed epochs, oldest first', () => {
+  const db = memoryDb();
+  upsertEpochs(
+    db,
+    [509, 510, 511].map((epochIndex) => epochAccount({ epochIndex }, `Pda${epochIndex}`)),
+    1000,
+    500
+  );
+
+  assert.deepEqual(
+    epochsMissingCreator(db, 10).map((r) => r.epochIndex),
+    [509, 510, 511]
+  );
+
+  setEpochCreator(db, 509, 'CreatorA', 1);
+  const pending = epochsMissingCreator(db, 10);
+  assert.deepEqual(pending.map((r) => r.epochIndex), [510, 511]);
+  assert.equal(pending[0].pubkey, 'Pda510', 'the PDA is carried through for the lookup');
+});
+
+test('the epoch PDA is stored so the creator lookup has an address to walk', () => {
+  const db = memoryDb();
+  upsertEpochs(db, [epochAccount({}, 'EpochPda511')], 1000, 500);
+  assert.equal(readEpoch(db)!.pubkey, 'EpochPda511');
 });
