@@ -538,6 +538,37 @@ paths:
             text/html: { schema: { type: string } }
         '503': { $ref: '#/components/responses/NotPublished' }
 
+  /api/v1/openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      tags: [Meta]
+      summary: This document
+      description: |
+        The API serves its own contract, so an agent can bootstrap from the host
+        alone rather than needing to know which repository and branch to read.
+
+        Republished on every publish cycle from the deployed source tree, so it
+        always describes the code that is actually running — a spec that has
+        drifted from its deployment is worse than none.
+
+        Deliberately absent from the manifests: this is documentation, not
+        network state, and a consumer diffing document digests should not see
+        churn because only the spec changed.
+      responses:
+        '200':
+          description: This OpenAPI document.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/yaml:
+              schema: { type: string }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404':
+          description: |
+            The publisher has not run since this endpoint was added, or the
+            source tree has no docs/openapi.yaml.
+
   /healthz:
     get:
       operationId: getHealth

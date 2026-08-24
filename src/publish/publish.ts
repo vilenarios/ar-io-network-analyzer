@@ -92,6 +92,43 @@ function sha256(content: string | Buffer): string {
 }
 
 /** Write one file atomically: scratch tree -> fsync -> rename into place. */
+/**
+ * Copy the OpenAPI spec into the published tree.
+ *
+ * The contract lived only in git, so an agent that reached the API host had no
+ * way to discover it — it had to already know which repo and which branch to
+ * read. Serving it from the API makes the host self-describing.
+ *
+ * Copied on every cycle rather than deployed once, so the served spec always
+ * matches the code that is running. A spec that drifts from the deployment is
+ * worse than no spec: it is confidently wrong.
+ *
+ * Cheap enough to ignore — 42 KB, 9.8 KB gzipped, smaller than delegates.json,
+ * and nginx serves it off disk like every other document. No RPC, no queries.
+ *
+ * Returns null when the spec is missing (a partial checkout, or the file moved)
+ * rather than failing the cycle: publishing the network snapshot matters more
+ * than publishing its documentation.
+ */
+export function publishOpenApiSpec(): DocumentEntry | null {
+  // Resolved from this module, not cwd: the units set WorkingDirectory, but a
+  // manual run from elsewhere must not silently skip the spec.
+  const specPath = resolve(import.meta.dirname, '..', '..', 'docs', 'openapi.yaml');
+  if (!existsSync(specPath)) return null;
+
+  const spec = readFileSync(specPath);
+  const relativePath = 'api/v1/openapi.yaml';
+  writeAtomic(relativePath, spec);
+  writeAtomic(`${relativePath}.gz`, gzipSync(spec));
+
+  return {
+    path: `/${relativePath}`,
+    sha256: createHash('sha256').update(spec).digest('hex'),
+    bytes: spec.length,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
 export function writeAtomic(relativePath: string, content: string | Buffer): void {
   const target = join(publicDir(), relativePath);
   const scratch = join(tmpDir(), relativePath);

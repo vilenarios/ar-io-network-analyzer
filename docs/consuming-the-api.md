@@ -9,7 +9,15 @@ Observation capture and the centralization analysis are mainnet exercises and
 deliberately do not run on devnet, so `/api/v1/network.json` and friends 404
 there. See §5.
 
-Machine-readable contract: [`openapi.yaml`](./openapi.yaml).
+Machine-readable contract, served by the API itself so you can bootstrap from
+the host alone:
+
+```bash
+curl -s https://network.services.ar.io/api/v1/openapi.yaml
+```
+
+It is republished every cycle from the deployed tree, so it always describes
+the running code. Source: [`openapi.yaml`](./openapi.yaml).
 
 ## 1. Two namespaces, different jobs and different clocks
 
