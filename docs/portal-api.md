@@ -27,17 +27,38 @@ publish time.
 | Document | Content | Size (mainnet, gzipped) |
 |---|---|---|
 | `index.json` | manifest: digests, sizes, freshness | ~1 KB |
-| `gateways.json` | every gateway, SDK shape verbatim | ~92 KB |
-| `balances.json` | every non-zero ARIO balance | ~92 KB |
-| `vaults.json` | every vault | ~44 KB |
-| `delegates.json` | every delegation | ~48 KB |
+| `gateways.json` | every gateway, SDK shape verbatim | ~90 KB |
+| `balances.json` | every non-zero ARIO balance | ~91 KB |
+| `vaults.json` | every vault (core program `VAULT`) | ~42 KB |
+| `delegates.json` | every delegation | ~45 KB |
+| `withdrawals.json` | every gateway withdrawal (GAR `WITHDRAWAL`) | ~42 KB |
+| `primaryNames.json` | every primary name | ~19 KB |
+| `arnsRecords.json` | every ArNS record | ~163 KB |
 | `summary.json` | token supply, demand factor, registry settings, counts | ~1 KB |
 
-**~280 KB gzipped for the entire network state.**
+**~512 KB gzipped for the entire network state**, of which `arnsRecords.json`
+is ~163 KB. A consumer that only needs the name *count* should read
+`summary.json` and never fetch it.
+
+`vaults.json` and `withdrawals.json` are different datasets, not two views of
+one: `getVaults` reads `VAULT` accounts in the **core** program, while
+`getWithdrawals` / `getGatewayVaults` read `WITHDRAWAL` accounts in the **GAR**
+program. Publishing one does not cover the other.
 
 `delegates.json` answers three separate on-chain queries. Filter by `address`
 for one wallet's delegations, by `gatewayAddress` for one gateway's delegators.
 Neither needs its own request.
+
+`withdrawals.json` answers the per-gateway vault view — filter by
+`gatewayAddress`. It does **not** answer `getWithdrawals(address)`: both public
+SDK projections drop the withdrawal's `owner`, and the decoder that keeps it is
+behind a private method. That lookup stays a direct memcmp-filtered read, which
+is the cheap class this service does not exist to displace.
+
+`primaryNames.json` is small but pulls its weight: `getPrimaryName(address)` is
+an **unfiltered** whole-program scan that deserializes every primary-name
+account and filters client-side, so each visitor resolving one name scans the
+whole set.
 
 Documents carry the SDK's decoded shape verbatim rather than a projection. A
 projection would be smaller by a few tens of kilobytes and would break silently
@@ -53,12 +74,20 @@ Per cycle, at the default 10-minute interval:
 | `getVaults` | 1 | 144 |
 | `getBalances` | 1 | 144 |
 | `getAllDelegates` | 1 | 144 |
-| `getArNSRecords` (count only, `limit: 1`) | 1 | 144 |
+| `getAllGatewayVaults` | 1 | 144 |
+| `getPrimaryNames` | 1 | 144 |
+| `getArNSRecords` (full) | 1 | 144 |
 | `getTokenSupply` | 1 | 144 |
 | `getGatewayRegistrySettings` + `getDemandFactor` | 2 | 288 |
 
-**~1,150 calls/day, flat.** It does not move when the portal gets busier — that
+**~1,440 calls/day, flat.** It does not move when the portal gets busier — that
 is the entire point.
+
+`getArNSRecords` is fetched in full rather than with `{ limit: 1 }` and costs
+exactly the same either way: the SDK scans the whole program and deserializes
+every account before `paginate()` truncates **in memory**, so a limit narrows
+the reply, not the query. The count in `summary.json` and the records in
+`arnsRecords.json` come from one call.
 
 Halving `PORTAL_POLL_INTERVAL_MS` doubles all of it.
 

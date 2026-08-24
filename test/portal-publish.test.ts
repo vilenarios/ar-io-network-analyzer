@@ -34,6 +34,11 @@ function snapshot(overrides: Partial<PortalSnapshot> = {}): PortalSnapshot {
     vaults: [{ address: 'wallet-1', vaultId: 1, balance: 10 }],
     balances: [{ address: 'wallet-1', balance: 123 }],
     delegates: [{ address: 'wallet-2', gatewayAddress: 'gw-1', delegatedStake: 7 }],
+    withdrawals: [
+      { cursorId: 'wd-1', vaultId: '1', balance: 5, gatewayAddress: 'gw-1' },
+    ],
+    primaryNames: [{ name: 'alice', address: 'wallet-1' }],
+    arnsRecords: [{ name: 'alice', processId: 'ant-1' }],
     arnsRecordCount: 2981,
     tokenSupply: { total: 1_000_000, circulating: 500_000 },
     demandFactor: 6.88,

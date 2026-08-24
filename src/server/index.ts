@@ -346,7 +346,10 @@ export function routeToFile(pathname: string): string | null {
 
   // Portal snapshot namespace. Listed explicitly from the contract rather than
   // matched loosely, so a typo is a 404 and not a path probe.
-  const portalMatch = /^\/api\/v1\/portal\/([a-z]+)\.json$/.exec(pathname);
+  // [a-zA-Z], not [a-z]: `primaryNames` and `arnsRecords` are camelCase, to
+  // match both the SDK reads they mirror and the `summary.counts` keys. The
+  // allowlist check below is what gates the path; this only fixes the shape.
+  const portalMatch = /^\/api\/v1\/portal\/([a-zA-Z]+)\.json$/.exec(pathname);
   if (portalMatch) {
     const name = portalMatch[1];
     const known = name === 'index' || (PORTAL_DOCUMENTS as readonly string[]).includes(name);

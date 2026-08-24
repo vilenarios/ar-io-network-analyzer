@@ -25,6 +25,19 @@ export interface PortalSnapshot {
   vaults: unknown[];
   balances: unknown[];
   delegates: unknown[];
+  /**
+   * Every `Withdrawal` account in the GAR program. Serves the portal's
+   * per-gateway vault view by filtering on `gatewayAddress`.
+   *
+   * It does NOT serve `getWithdrawals(address)`: both public SDK projections
+   * drop the `owner` field, and the raw decoder that keeps it is reachable
+   * only through a private method. A per-wallet withdrawal lookup is a
+   * memcmp-filtered read anyway — the cheap class this service does not need
+   * to displace.
+   */
+  withdrawals: unknown[];
+  primaryNames: unknown[];
+  arnsRecords: unknown[];
   arnsRecordCount: number;
   tokenSupply: unknown;
   demandFactor: number | null;
@@ -59,11 +72,15 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   const vaults = items((await ario.getVaults(FULL_SCAN)) as Paged);
   const balances = items((await ario.getBalances(FULL_SCAN)) as Paged);
   const delegates = items((await ario.getAllDelegates(FULL_SCAN)) as Paged);
+  const withdrawals = items((await ario.getAllGatewayVaults(FULL_SCAN)) as Paged);
+  const primaryNames = items((await ario.getPrimaryNames(FULL_SCAN)) as Paged);
 
-  // The portal reads only `totalItems` from this, so ask for one record rather
-  // than publishing ~3,000 of them for a count.
-  const arnsPage = (await ario.getArNSRecords({ limit: 1 })) as Paged;
-  const arnsRecordCount = arnsPage?.totalItems ?? 0;
+  // Ask for every record rather than `{ limit: 1 }`. It costs the same: the
+  // SDK scans the whole ArNS program and deserializes every account before
+  // `paginate()` truncates in memory, so a limit narrows the reply and not
+  // the query. Taking the items keeps the work instead of discarding it.
+  const arnsRecords = items((await ario.getArNSRecords(FULL_SCAN)) as Paged);
+  const arnsRecordCount = arnsRecords.length;
 
   const tokenSupply = await ario.getTokenSupply();
   const demandFactor = await readDemandFactor(ario);
@@ -76,6 +93,9 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
     vaults,
     balances,
     delegates,
+    withdrawals,
+    primaryNames,
+    arnsRecords,
     arnsRecordCount,
     tokenSupply,
     demandFactor,

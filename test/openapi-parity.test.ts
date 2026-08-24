@@ -41,6 +41,9 @@ const SERVED = [
   '/api/v1/portal/vaults.json',
   '/api/v1/portal/balances.json',
   '/api/v1/portal/delegates.json',
+  '/api/v1/portal/withdrawals.json',
+  '/api/v1/portal/primaryNames.json',
+  '/api/v1/portal/arnsRecords.json',
   '/api/v1/portal/summary.json',
   '/healthz',
 ];
