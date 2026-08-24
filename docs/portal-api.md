@@ -100,6 +100,12 @@ git clone … /programs/ar-io-network-analyzer && cd /programs/ar-io-network-ana
 nvm use            # .nvmrc → 22; better-sqlite3 prebuilds are ABI-specific
 yarn install
 
+# The units write here with StandardOutput=append:, which does NOT create the
+# directory. `logs/` is gitignored, so a fresh clone does not have it and the
+# service fails to start with a bare status=238/EXEC-style error that does not
+# name the log path.
+mkdir -p logs
+
 sudo mkdir -p /etc/ario-portal-api /var/lib/ario-portal-api/{prod,testnet}/public
 sudo chown -R vilenarios:vilenarios /var/lib/ario-portal-api
 
@@ -112,15 +118,51 @@ sudo editor /etc/ario-portal-api/prod.env      # set SOLANA_RPC_URL
 PUBLIC_DIR=/var/lib/ario-portal-api/prod/public \
   SOLANA_RPC_URL=… yarn portal:once
 
-sudo cp deploy/ario-portal-*@.service /etc/systemd/system/
+# PREFLIGHT: the units name an absolute node path, because systemd does not
+# inherit a login PATH and nvm is not on the system one. Confirm it matches
+# this host before enabling anything — a mismatch fails at exec time with no
+# useful message.
+which node && node --version
+grep -n 'nvm/versions' deploy/ario-portal-publish@.service
+# If they differ, update BOTH the Environment=PATH and ExecStart lines in both
+# unit files (the existing arns-observer-capture.service has the same pattern).
+
+# install -m 644, not cp: systemd refuses to trust a world-writable unit and
+# warns on an executable one, and file modes off a shared checkout are not
+# reliably 644.
+sudo install -m 644 deploy/ario-portal-publish@.service /etc/systemd/system/
+sudo install -m 644 deploy/ario-portal-serve@.service   /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/ario-portal-publish@.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now ario-portal-publish@prod ario-portal-serve@prod
 sudo systemctl enable --now ario-portal-publish@testnet ario-portal-serve@testnet
 
-sudo cp deploy/nginx-portal-api.conf /etc/nginx/sites-available/portal-api
+sudo install -m 644 deploy/nginx-portal-api.conf /etc/nginx/sites-available/portal-api
 sudo ln -s /etc/nginx/sites-available/portal-api /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+Two values in the nginx config must be set for this host before it is correct:
+
+- **`set_real_ip_from`** defaults to `10.0.0.0/8` as a placeholder. Set it to the
+  Hetzner load balancer's actual subnet. Leaving it broad lets any client
+  upstream of nginx claim an arbitrary address via `X-Forwarded-For`, which
+  makes the rate limit trivially bypassable.
+- **`server_name`** on both blocks — `network.services.ar.io` and
+  `network.services.ar-io.dev`. Point both at the load balancer in DNS, and
+  terminate TLS there; these blocks listen on plain HTTP and must not be
+  exposed publicly.
+
+### Verify before pointing the portal at it
+
+```bash
+curl -s https://network.services.ar.io/healthz | jq '.status, .portal'
+curl -sI https://network.services.ar.io/api/v1/portal/gateways.json   # 200, ETag, Cache-Control
+curl -s https://network.services.ar.io/api/v1/portal/index.json | jq '.network, .freshness'
+```
+
+`network` must match the environment, and `freshness.stale` must be `false`.
+Then set `VITE_PORTAL_API_URL` in the portal for that environment.
 
 ### Two instances, one box
 
