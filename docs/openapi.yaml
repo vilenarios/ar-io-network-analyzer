@@ -110,6 +110,83 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '404': { $ref: '#/components/responses/NotFoundJson' }
 
+  /api/v1/network.json:
+    get:
+      operationId: getNetworkSummary
+      tags: [Analysis]
+      summary: Network centralization summary (daily)
+      description: |
+        The output of the daily centralization analysis — the starting point
+        for network-health and actor-concentration work.
+
+        - `totals` — `gatewaysInNetwork` (every gateway on chain) vs
+          `gatewaysAnalyzed` (those `joined` **and** carrying an FQDN, so
+          roughly half), plus `resolved`, `failedDns`, `clustered` and
+          `highCentralization`.
+        - `clusters` — groups of gateways that look like one actor, each with
+          `size`, `avgScore`, `baseDomain`, `pattern`, member `gateways`,
+          `wallets` and `totalRewards`.
+        - `topSuspicious` — per-gateway `score` with the `reasons` that produced
+          it.
+        - `infrastructure` — datacenter share, `topProviders`,
+          `countryDistribution`, unique ISP/country/ASN counts.
+        - `observers` — a rollup of the observer-independence findings
+          (`findingCount`, `bySeverity`, `byKind`) so one fetch answers "how
+          concentrated is the network, and do the observers agree".
+
+        **Check `generatedAt` before drawing conclusions.** This is refreshed
+        once a day, not every ten minutes like the portal documents. A stale
+        value here means the analysis stopped, not that the network stopped
+        moving.
+
+        Two fields are load-bearing when comparing runs: `infrastructure` is
+        empty and `totals.highCentralization` collapses to 0 if the analysis
+        ran with `SKIP_GEO=1` — geography carries 25% of the centralization
+        score. A report with `uniqueAsns: 0` is a degraded run, not a
+        decentralized network. `economics` is currently always `null`.
+      responses:
+        '200':
+          description: Network centralization summary.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSummary' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/gateways.json:
+    get:
+      operationId: getGatewayRoster
+      tags: [Analysis]
+      summary: Per-gateway analysis roster (daily)
+      description: |
+        One row per analysed gateway — the per-entity detail behind
+        `network.json`'s aggregates. Use this to attribute a cluster to
+        specific operators, or to join centralization scores against stake,
+        rewards and resolved infrastructure.
+
+        Only gateways that are `joined` **and** publish an FQDN appear, because
+        the analysis resolves DNS and fingerprints each host. Compare the row
+        count against `network.json`'s `totals.gatewaysInNetwork` before
+        treating it as the whole network.
+
+        This is **not** `/api/v1/portal/gateways.json`. That one is the raw SDK
+        gateway records refreshed every 10 minutes for the portal; this is the
+        daily analysis output with scores and resolved infrastructure attached.
+      responses:
+        '200':
+          description: Analysed gateway roster.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /api/v1/observers.json:
     get:
       operationId: getObservers
@@ -397,6 +474,70 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '503': { $ref: '#/components/responses/NotPublished' }
 
+  /archive/{date}/{file}:
+    get:
+      operationId: getArchivedReport
+      tags: [Analysis]
+      summary: An archived daily analysis run
+      description: |
+        Each daily run is archived under its date, so a centralization figure
+        can be compared against the same figure a week earlier. Enumerate the
+        available dates from `/api/v1/index.json`'s `archive` array rather than
+        guessing — a date with no run is a 404.
+
+        Exactly three files are published per date, and nothing else in the
+        directory is reachable:
+
+        | File | Use |
+        |---|---|
+        | `summary.json` | machine-readable — the same shape as `network.json` for that day |
+        | `gateways.csv` | per-gateway rows, for spreadsheets and notebooks |
+        | `index.html` | the rendered report |
+
+        For trend analysis prefer `summary.json`; it is the only one of the
+        three with a stable schema.
+      parameters:
+        - name: date
+          in: path
+          required: true
+          schema: { type: string, pattern: '^\d{4}-\d{2}-\d{2}$' }
+          description: UTC date of the run, as listed in the manifest's `archive` array.
+          example: '2026-08-24'
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [summary.json, gateways.csv, index.html]
+          description: |
+            Only these three are served. Any other name is a 404 — the
+            namespace is an allowlist, not a directory listing.
+      responses:
+        '200':
+          description: The archived file.
+          content:
+            application/json: { schema: { type: object, additionalProperties: true } }
+            text/csv: { schema: { type: string } }
+            text/html: { schema: { type: string } }
+        '404':
+          description: No run for that date, or a filename outside the allowlist.
+
+  /:
+    get:
+      operationId: getHomepage
+      tags: [Analysis]
+      summary: The latest rendered report (HTML)
+      description: |
+        Human-facing. The current day's centralization report, the same content
+        as the newest `/archive/{date}/index.html`. Agents should read
+        `/api/v1/network.json` instead — same analysis, structured.
+      responses:
+        '200':
+          description: HTML report.
+          content:
+            text/html: { schema: { type: string } }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /healthz:
     get:
       operationId: getHealth
@@ -491,6 +632,87 @@ components:
             Keyed by document name — gateways, vaults, balances, delegates,
             withdrawals, primaryNames, arnsRecords, summary.
         freshness: { $ref: '#/components/schemas/PortalFreshness' }
+
+    NetworkSummary:
+      type: object
+      required: [schemaVersion, generatedAt, totals]
+      description: |
+        Daily centralization analysis. `economics` is currently always null.
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt:
+          type: string
+          format: date-time
+          description: |
+            Refreshed DAILY, not every 10 minutes. Staleness here means the
+            analysis stopped, not that the network is quiet.
+        totals:
+          type: object
+          properties:
+            gatewaysInNetwork: { type: integer, description: Every gateway on chain. }
+            gatewaysAnalyzed:
+              type: integer
+              description: Only those `joined` AND publishing an FQDN — roughly half.
+            resolved: { type: integer }
+            failedDns: { type: integer }
+            clustered: { type: integer, description: Gateways placed in a same-actor cluster. }
+            highCentralization:
+              type: integer
+              description: |
+                Collapses to 0 if the run had SKIP_GEO=1 — geography is 25% of
+                the score. Cross-check `infrastructure.uniqueAsns` before
+                reading a low value as good news.
+        clusters:
+          type: array
+          description: Groups of gateways that look like one actor.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              key: { type: string }
+              size: { type: integer }
+              avgScore: { type: number }
+              baseDomain: { type: string }
+              pattern: { type: string }
+              gateways: { type: array, items: { type: string } }
+              wallets: { type: array, items: { type: string } }
+              totalRewards: { type: number }
+        topSuspicious:
+          type: array
+          items:
+            type: object
+            properties:
+              fqdn: { type: string }
+              score: { type: number }
+              reasons: { type: array, items: { type: string } }
+        infrastructure:
+          type: object
+          description: |
+            All zeros when the run had SKIP_GEO=1. Treat `uniqueAsns: 0` as a
+            degraded run rather than a finding.
+          properties:
+            totalDatacenterHosted: { type: integer }
+            datacenterPercentage: { type: number }
+            topProviders: { type: array, items: { type: object, additionalProperties: true } }
+            countryDistribution: { type: array, items: { type: object, additionalProperties: true } }
+            uniqueIsps: { type: integer }
+            uniqueCountries: { type: integer }
+            uniqueAsns: { type: integer }
+        observers:
+          type: object
+          description: Rollup of the observer-independence findings for the analysed window.
+          properties:
+            epochRange: { type: object, additionalProperties: true }
+            observerCount: { type: integer }
+            findingCount: { type: integer }
+            bySeverity: { type: object, additionalProperties: { type: integer } }
+            byKind: { type: object, additionalProperties: { type: integer } }
+        economics:
+          nullable: true
+          description: Always null today — defined in the contract but never populated.
+        versions:
+          nullable: true
+          description: Gateway release-version distribution. Null if the run skipped performance probes.
 
     PortalProgramIds:
       type: object

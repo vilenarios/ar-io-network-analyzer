@@ -17,6 +17,7 @@ import { tryOpenReader } from '../db/index.js';
 import { consecutiveFailedPollRuns, latestAnalysisRun, latestPollRun } from '../db/repo-read.js';
 import { isHealthyStatus } from '../capture/status.js';
 import type { Manifest } from '../publish/contract.js';
+import { OBSERVER_DOCUMENTS } from '../publish/contract.js';
 import {
   PORTAL_DOCUMENTS,
   type PortalManifest,

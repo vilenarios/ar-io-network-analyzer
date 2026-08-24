@@ -1,5 +1,8 @@
 # Operations runbook — observation capture
 
+> Consuming these documents rather than running the pipeline? See
+> [`consuming-the-api.md`](./consuming-the-api.md).
+
 The one thing this runbook exists to protect: **`close_observation` is
 permissionless**. Observation accounts are swept off the chain within days of
 an epoch closing, and there is no archive to backfill from. An hour of downtime

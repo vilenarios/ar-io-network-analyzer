@@ -1,5 +1,10 @@
 # Portal snapshot API — operations
 
+> **Consuming the API rather than operating it?** See
+> [`consuming-the-api.md`](./consuming-the-api.md) for the analyst/agent guide,
+> and [`openapi.yaml`](./openapi.yaml) for the machine-readable contract. This
+> file is about running the service.
+
 The network portal used to run `getProgramAccounts` over whole Solana programs
 from **every visitor's browser**, so RPC cost scaled with how popular the site
 was. This service runs those scans once per cadence and publishes static JSON.

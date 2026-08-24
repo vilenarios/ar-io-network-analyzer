@@ -6,6 +6,17 @@
 # (gatewayCount 18, from 2026-08-13) until this unit existed. It also feeds the
 # observer detectors: without a published gateways.json, `observers:findings`
 # logs "infrastructure detectors run degraded" and produces weaker findings.
+# MAINNET ONLY — deliberately NOT a systemd template.
+#
+# This is a plain unit bound to /etc/ario-portal-api/prod.env, not an
+# `@%i` template like ario-portal-{publish,serve}@. That is the whole point:
+# the centralization and observer analysis is a mainnet exercise. Running it
+# against devnet would burn RPC and DNS on a throwaway network, publish
+# analysis documents into the testnet namespace where nothing consumes them,
+# and make "is the network centralized" ambiguous about which network.
+#
+# If you ever need a devnet variant, add a separate explicitly-named unit.
+# Do NOT convert this one to a template.
 Description=AR.IO network centralization analysis (daily)
 Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
 After=network-online.target
