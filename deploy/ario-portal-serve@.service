@@ -1,0 +1,42 @@
+[Unit]
+# Template unit: one instance per environment.
+#   systemctl enable --now ario-portal-serve@prod
+#   systemctl enable --now ario-portal-serve@testnet
+#
+# Serves /healthz and is a fallback for the documents. nginx serves the
+# documents straight off disk in normal operation (deploy/nginx-portal-api.conf),
+# so this process is not on the hot path.
+Description=AR.IO portal snapshot server (%i)
+Documentation=file:///programs/ar-io-network-analyzer/docs/portal-api.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vilenarios
+Group=vilenarios
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+EnvironmentFile=/etc/ario-portal-api/%i.env
+Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn serve
+
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/portal-serve-%i.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/portal-serve-%i.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Read-only: the server never writes. Only the publisher does.
+ReadOnlyPaths=/var/lib/ario-portal-api/%i
+ReadWritePaths=/programs/ar-io-network-analyzer/logs
+
+[Install]
+WantedBy=multi-user.target

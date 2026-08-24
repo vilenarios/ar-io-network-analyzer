@@ -164,6 +164,157 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+
+  /api/v1/portal/index.json:
+    get:
+      operationId: getPortalManifest
+      tags: [Portal]
+      summary: Portal snapshot manifest
+      description: |
+        Start here. Lists every portal document with its size, sha256 and
+        generation time, plus a `freshness` block saying whether the publisher
+        is still succeeding.
+
+        This is the document a client polls. It is small and separately
+        cacheable (`max-age=30`) so a consumer can check freshness without
+        re-downloading the collections.
+
+        **Check `freshness.stale` before trusting the data.** A failed publish
+        cycle leaves the documents in place — they are still the best available
+        — and records the failure here. A client that ignores this cannot tell
+        a snapshot published a minute ago from one that stopped updating hours
+        ago.
+      responses:
+        '200':
+          description: The portal manifest.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalManifest' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/gateways.json:
+    get:
+      operationId: getPortalGateways
+      tags: [Portal]
+      summary: Every gateway in the network
+      description: |
+        The full gateway roster, carrying the SDK's decoded shape verbatim —
+        `gatewayAddress`, `operatorStake`, `totalDelegatedStake`, `settings`,
+        `stats`, `weights`, `status` and timestamps.
+
+        Replaces a `getGateways` whole-program scan per browser.
+      responses:
+        '200':
+          description: Gateway collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/vaults.json:
+    get:
+      operationId: getPortalVaults
+      tags: [Portal]
+      summary: Every vault
+      description: |
+        All vaults, each with `address`, `vaultId`, `balance`, `controller` and
+        its start/end timestamps. Replaces a `getVaults` whole-program scan.
+      responses:
+        '200':
+          description: Vault collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/balances.json:
+    get:
+      operationId: getPortalBalances
+      tags: [Portal]
+      summary: Every non-zero ARIO balance
+      description: |
+        Complete, not truncated: `{ address, balance }` for every holder with a
+        non-zero balance. Zero balances are omitted by the SDK, not by this
+        service.
+
+        Balances are in **mARIO**, as returned on chain. Convert at the display
+        boundary.
+      responses:
+        '200':
+          description: Balance collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/delegates.json:
+    get:
+      operationId: getPortalDelegates
+      tags: [Portal]
+      summary: Every delegation
+      description: |
+        One entry per delegation: `address` (the delegator), `gatewayAddress`,
+        `delegatedStake`, `vaultedStake` and `startTimestamp`.
+
+        This single document answers three separate on-chain queries. Filter by
+        `address` for one wallet's delegations, or by `gatewayAddress` for one
+        gateway's delegators — neither needs its own request.
+      responses:
+        '200':
+          description: Delegation collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/summary.json:
+    get:
+      operationId: getPortalSummary
+      tags: [Portal]
+      summary: Network scalars and collection counts
+      description: |
+        The values a client would otherwise fetch one RPC call at a time on
+        every page load: `tokenSupply`, `demandFactor`,
+        `gatewayRegistrySettings`, and a `counts` block including
+        `arnsRecords`.
+
+        `arnsRecords` is a count only. Publishing all ~3,000 ArNS records would
+        add ~160 KB for a number nothing else needs.
+
+        `demandFactor` is `null` when that read failed. It is the one value
+        whose absence degrades the document rather than failing the cycle.
+      responses:
+        '200':
+          description: Summary document.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalSummary' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /healthz:
     get:
       operationId: getHealth
@@ -197,6 +348,15 @@ components:
   responses:
     NotModified:
       description: Content unchanged since the `If-None-Match` value.
+    NotPublished:
+      description: |
+        Nothing has been published in this namespace yet. The service is up but
+        has no data — a publisher has not completed a first cycle. Checked per
+        namespace, so a portal-only deployment is not gated on the observer
+        documents.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     NotFoundJson:
       description: No such document.
       content:
@@ -204,6 +364,96 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
+    PortalNetwork:
+      type: string
+      enum: [mainnet, devnet, testnet, localnet, unknown]
+      description: |
+        Inferred from the RPC endpoint, or set explicitly with `PORTAL_NETWORK`.
+        The endpoint itself is never exposed — it may carry a provider token.
+
+    PortalFreshness:
+      type: object
+      required: [generatedAt, ageSeconds, stale, consecutiveFailures]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the documents this manifest describes were written.
+        ageSeconds:
+          type: integer
+          description: Zero as published; recomputed by the server on read.
+        stale:
+          type: boolean
+          description: |
+            True when the last publish cycle failed. The documents are the
+            previous cycle's and have not changed.
+        lastSuccessAt:
+          type: [string, 'null']
+          format: date-time
+        consecutiveFailures:
+          type: integer
+          description: Consecutive failed cycles. Alert above 2 at a 10-minute cadence.
+
+    PortalManifest:
+      type: object
+      required: [schemaVersion, generatedAt, network, documents, freshness]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        network: { $ref: '#/components/schemas/PortalNetwork' }
+        documents:
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/DocumentRef' }
+          description: Keyed by document name — gateways, vaults, balances, delegates, summary.
+        freshness: { $ref: '#/components/schemas/PortalFreshness' }
+
+    PortalCollection:
+      type: object
+      required: [schemaVersion, generatedAt, network, count, items]
+      description: |
+        Envelope shared by every portal collection. `items` carries the SDK's
+        decoded shape verbatim rather than a projection, so a consumer reading
+        a field the portal renders cannot find it missing here.
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        network: { $ref: '#/components/schemas/PortalNetwork' }
+        count:
+          type: integer
+          description: Always `items.length`. Never a separately tracked total.
+        items:
+          type: array
+          items: { type: object, additionalProperties: true }
+
+    PortalSummary:
+      type: object
+      required: [schemaVersion, generatedAt, network, counts]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        network: { $ref: '#/components/schemas/PortalNetwork' }
+        counts:
+          type: object
+          required: [gateways, vaults, balances, delegates, arnsRecords]
+          properties:
+            gateways: { type: integer }
+            vaults: { type: integer }
+            balances: { type: integer }
+            delegates: { type: integer }
+            arnsRecords:
+              type: integer
+              description: Count only; the records themselves are not published.
+        tokenSupply:
+          type: object
+          additionalProperties: true
+          description: Total, circulating and locked supply, in mARIO.
+        demandFactor:
+          type: [number, 'null']
+          description: Null when that read failed; its absence degrades rather than fails a cycle.
+        gatewayRegistrySettings:
+          type: object
+          additionalProperties: true
+
     Error:
       type: object
       required: [error, path]

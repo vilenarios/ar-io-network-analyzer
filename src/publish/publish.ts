@@ -92,7 +92,7 @@ function sha256(content: string | Buffer): string {
 }
 
 /** Write one file atomically: scratch tree -> fsync -> rename into place. */
-function writeAtomic(relativePath: string, content: string | Buffer): void {
+export function writeAtomic(relativePath: string, content: string | Buffer): void {
   const target = join(publicDir(), relativePath);
   const scratch = join(tmpDir(), relativePath);
 
@@ -115,7 +115,11 @@ function writeAtomic(relativePath: string, content: string | Buffer): void {
  * entry. The digest is of the uncompressed bytes — the server reuses it as an
  * ETag rather than hashing again.
  */
-function writeDocument(relativePath: string, value: unknown, generatedAt: string): DocumentEntry {
+export function writeDocument(
+  relativePath: string,
+  value: unknown,
+  generatedAt: string
+): DocumentEntry {
   const json = `${JSON.stringify(value, null, 2)}\n`;
   writeAtomic(relativePath, json);
   writeAtomic(`${relativePath}.gz`, gzipSync(Buffer.from(json)));

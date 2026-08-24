@@ -33,7 +33,11 @@
     "serve": "tsx --env-file-if-exists=.env src/server/index.ts",
     "db:migrate": "tsx --env-file-if-exists=.env src/db/migrations.ts --apply",
     "db:stats": "tsx --env-file-if-exists=.env src/db/migrations.ts --stats",
-    "typecheck": "tsc --noEmit -p tsconfig.test.json"
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "portal": "tsx --env-file-if-exists=.env src/portal/daemon.ts",
+    "portal:once": "tsx --env-file-if-exists=.env src/portal/daemon.ts --once",
+    "portal:status": "tsx --env-file-if-exists=.env src/portal/daemon.ts --status",
+    "portal:loadtest": "tsx --env-file-if-exists=.env test/load-test.ts"
   },
   "keywords": [
     "ar.io",
@@ -45,7 +49,7 @@
   "author": "Vilenarios",
   "license": "MIT",
   "dependencies": {
-    "@ar.io/sdk": "4.0.2",
+    "@ar.io/sdk": "4.1.0-alpha.2",
     "@solana/kit": "^6.8.0",
     "better-sqlite3": "^11.5.0"
   },

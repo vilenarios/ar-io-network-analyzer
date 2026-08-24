@@ -1,0 +1,47 @@
+[Unit]
+# Template unit: one instance per environment.
+#   systemctl enable --now ario-portal-publish@prod
+#   systemctl enable --now ario-portal-publish@testnet
+#
+# %i is the instance name and selects the environment file, which is what
+# separates mainnet from testnet: different RPC endpoint, program ids, public
+# directory and port. Nothing else differs.
+Description=AR.IO portal snapshot publisher (%i)
+Documentation=file:///programs/ar-io-network-analyzer/docs/portal-api.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vilenarios
+Group=vilenarios
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+# Carries SOLANA_RPC_URL, which may hold a provider token. Root-owned, 0600.
+EnvironmentFile=/etc/ario-portal-api/%i.env
+# systemd does not inherit a login PATH; nvm's node must be named explicitly.
+Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
+
+ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn portal
+
+# A failed cycle is survivable — the publisher keeps the previous documents and
+# retries on the next tick — but a crashed process publishes nothing at all,
+# and the snapshot silently ages until someone notices.
+Restart=always
+RestartSec=15
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/portal-%i.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/portal-%i.log
+
+# It holds no keys and signs nothing.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The only path it writes.
+ReadWritePaths=/var/lib/ario-portal-api/%i /programs/ar-io-network-analyzer/logs
+
+[Install]
+WantedBy=multi-user.target

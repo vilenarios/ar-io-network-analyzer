@@ -31,6 +31,8 @@ Network Centralization Analyzers for the Arweave ecosystem:
 - `yarn observers:backfill` - Same, over every captured epoch
 - `yarn observers:calibrate [--activate <id> [--force]]` - Measure / promote the similarity threshold
 - `yarn serve` - Read-only HTTP server over `public/`
+- `yarn portal` / `yarn portal:once` / `yarn portal:status` - Portal snapshot publisher (see `docs/portal-api.md`)
+- `yarn portal:loadtest` - Capacity harness; not part of `yarn test`
 - `yarn db:migrate` / `yarn db:stats` - Apply migrations / table counts
 
 ### Development
@@ -313,6 +315,50 @@ Each of these cost real time. None are visible from reading the code alone.
   the alert should fire on `capture.stale` **and** on `accountCount == 0` — a
   zero count means the discriminator stopped matching, which otherwise looks
   exactly like a quiet network.
+
+---
+
+## Portal Snapshot API (`src/portal`, `src/publish/portal.ts`)
+
+Publishes the whole-program scans the network portal would otherwise run per
+browser. Full operations doc in `docs/portal-api.md`.
+
+| Process | Entry point | Cadence | Network |
+|---|---|---|---|
+| Publisher | `src/portal/daemon.ts` | 10 min | 7 reads per cycle |
+| Server | `src/server/index.ts` | always | serves `public/` read-only |
+
+### Load-bearing facts
+
+- **The publisher's RPC endpoint must NOT have a referrer allowlist.** It is a
+  server process, so it sends no browser `Referer`, and `@solana/kit` enforces
+  the browser forbidden-header list even in Node —
+  `SolanaError: HTTP header(s) forbidden: referer`. A referrer-restricted
+  endpoint returns 401 regardless of auth method. This cost real time to
+  diagnose; the symptom looks like a bad token.
+- **Documents carry the SDK's decoded shape verbatim, not a projection.** All
+  six are ~280 KB gzipped. A projection saves little and breaks silently the
+  first time the portal renders a field it dropped.
+- **`@ar.io/sdk` must stay aligned with the portal's version.** At 4.0.2
+  `getAllDelegates` returned HTTP 403 where 4.1.0-alpha.2 succeeds, and the
+  published shapes must match what the portal's SDK decodes.
+- **A zero-gateway scan is refused, never published.** It means a filter
+  stopped matching or the program id is wrong; publishing it would replace good
+  documents with an empty network.
+- **A failed cycle rewrites only the manifest.** Documents stay — they are
+  still the best data available — and `freshness.stale` plus
+  `consecutiveFailures` say so. Without that, a publisher failing for six hours
+  looks identical to one that just succeeded.
+- **`delegates.json` answers three portal queries.** Filter by `address` for a
+  wallet's delegations, by `gatewayAddress` for a gateway's delegators.
+- **Deliberately unlocked.** Unlike capture, nothing here is irreplaceable:
+  every document is re-derivable from chain, writes are atomic, and systemd
+  runs one instance. A lock would only reintroduce the stale-lock failure mode.
+- **"Not published" is per-namespace.** The testnet instance runs only the
+  portal publisher, so the observer manifest never exists. Gating every
+  `/api/` path on it would 503 the whole service forever.
+- **nginx serves the documents, not Node.** The Node server reads each file
+  synchronously per request. It stays a working fallback and owns `/healthz`.
 
 ## Dependencies
 

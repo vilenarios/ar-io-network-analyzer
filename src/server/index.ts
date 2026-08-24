@@ -18,6 +18,11 @@ import { consecutiveFailedPollRuns, latestAnalysisRun, latestPollRun } from '../
 import { isHealthyStatus } from '../capture/status.js';
 import type { Manifest } from '../publish/contract.js';
 import {
+  PORTAL_DOCUMENTS,
+  type PortalManifest,
+  portalDocumentPath,
+} from '../portal/contract.js';
+import {
   ARCHIVE_FILE_PATTERN,
   DATE_PATTERN,
   EPOCH_PATTERN,
@@ -30,6 +35,8 @@ const DEFAULT_PORT = 8787;
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_CAPTURE_MAX_AGE_SECONDS = 3_600;
 const DEFAULT_ANALYSIS_MAX_AGE_SECONDS = 172_800;
+/** Two and a half publish cycles at the default 10-minute cadence. */
+const DEFAULT_PORTAL_MAX_AGE_SECONDS = 1_500;
 /** /healthz opens a SQLite connection; it is unauthenticated, so cache it. */
 const HEALTH_CACHE_MS = 5_000;
 
@@ -144,6 +151,64 @@ function manifestEtags(): Map<string, string> {
   return etags;
 }
 
+interface PortalCache {
+  mtimeMs: number;
+  size: number;
+  etags: Map<string, string>;
+  manifest: PortalManifest | null;
+}
+
+let portalCache: PortalCache | null = null;
+
+/**
+ * Portal manifest digests, memoized on (mtime, size) exactly like the observer
+ * manifest above — same reasoning: it is polled, and re-parsing per request
+ * puts unbounded synchronous disk I/O on the event loop for an unauthenticated
+ * caller.
+ */
+function readPortalCache(): PortalCache {
+  const empty: PortalCache = { mtimeMs: 0, size: 0, etags: new Map(), manifest: null };
+  const manifestPath = join(publicDir(), portalDocumentPath('index'));
+  if (!existsSync(manifestPath)) {
+    portalCache = null;
+    return empty;
+  }
+
+  let stat;
+  try {
+    stat = statSync(manifestPath);
+  } catch {
+    return portalCache ?? empty;
+  }
+
+  if (portalCache && portalCache.mtimeMs === stat.mtimeMs && portalCache.size === stat.size) {
+    return portalCache;
+  }
+
+  const etags = new Map<string, string>();
+  let manifest: PortalManifest | null = null;
+  try {
+    const raw = readFileSync(manifestPath);
+    manifest = JSON.parse(raw.toString('utf8')) as PortalManifest;
+    for (const entry of Object.values(manifest.documents ?? {})) {
+      if (entry) etags.set(entry.path, entry.sha256);
+    }
+    // The manifest cannot carry its own digest, and it is the most-polled
+    // document of the set — hash it once per publish, not once per request.
+    etags.set(`/${portalDocumentPath('index')}`, createHash('sha256').update(raw).digest('hex'));
+  } catch {
+    manifest = null;
+  }
+
+  portalCache = { mtimeMs: stat.mtimeMs, size: stat.size, etags, manifest };
+  return portalCache;
+}
+
+/** True once the portal publisher has written a manifest. */
+function portalPublished(): boolean {
+  return existsSync(join(publicDir(), portalDocumentPath('index')));
+}
+
 let healthCache: { at: number; value: { status: number; body: Record<string, unknown> } } | null =
   null;
 
@@ -202,11 +267,24 @@ function healthz(): { status: number; body: Record<string, unknown> } {
     }
   }
 
+  // The portal snapshot is an independent subsystem: an instance may publish
+  // it and nothing else (the testnet deployment does). Its health is reported
+  // separately and only counts toward `degraded` when it is actually running.
+  const portal = portalHealth();
+
   // A cycle that completed but captured nothing is recorded as `anomaly`, not
   // `ok`; treating anything other than a healthy status as fine is exactly how
   // a total capture blackout would keep a green light here.
+  const observerRunning = published;
+  const observerDegraded =
+    observerRunning && (capture.stale === true || !isHealthyStatus(String(capture.status ?? '')));
+  const portalDegraded = portal.published === true && portal.stale === true;
+
+  // Nothing published at all is degraded; otherwise each running subsystem
+  // votes. A portal-only instance is healthy when its snapshot is fresh.
   const degraded =
-    !published || capture.stale === true || !isHealthyStatus(String(capture.status ?? ''));
+    (!observerRunning && portal.published !== true) || observerDegraded || portalDegraded;
+
   return {
     status: 200,
     body: {
@@ -214,9 +292,31 @@ function healthz(): { status: number; body: Record<string, unknown> } {
       published,
       capture,
       analysis,
+      portal,
       // Never the RPC endpoint, never a URL.
       uptimeSeconds: Math.round(process.uptime()),
     },
+  };
+}
+
+/** Freshness of the portal snapshot, read from its manifest. */
+function portalHealth(): Record<string, unknown> {
+  const { manifest } = readPortalCache();
+  if (!manifest) return { published: false, status: 'never_published' };
+
+  const generatedAt = manifest.generatedAt;
+  const ageSeconds = Math.round((Date.now() - Date.parse(generatedAt)) / 1000);
+  const maxAge = envSeconds('PORTAL_MAX_AGE_SECONDS', DEFAULT_PORTAL_MAX_AGE_SECONDS);
+
+  return {
+    published: true,
+    status: Number.isFinite(ageSeconds) && ageSeconds <= maxAge ? 'ok' : 'stale',
+    network: manifest.network,
+    generatedAt,
+    ageSeconds,
+    stale: !(Number.isFinite(ageSeconds) && ageSeconds <= maxAge),
+    consecutiveFailures: manifest.freshness?.consecutiveFailures ?? 0,
+    documents: Object.keys(manifest.documents ?? {}),
   };
 }
 
@@ -244,6 +344,15 @@ export function routeToFile(pathname: string): string | null {
     return pathname.slice(1);
   }
 
+  // Portal snapshot namespace. Listed explicitly from the contract rather than
+  // matched loosely, so a typo is a 404 and not a path probe.
+  const portalMatch = /^\/api\/v1\/portal\/([a-z]+)\.json$/.exec(pathname);
+  if (portalMatch) {
+    const name = portalMatch[1];
+    const known = name === 'index' || (PORTAL_DOCUMENTS as readonly string[]).includes(name);
+    return known ? pathname.slice(1) : null;
+  }
+
   return null;
 }
 
@@ -251,6 +360,7 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
   const method = req.method || 'GET';
   const pathname = new URL(req.url || '/', 'http://localhost').pathname;
   const isApi = pathname.startsWith('/api/');
+  const isPortal = pathname.startsWith('/api/v1/portal/');
 
   if (method !== 'GET' && method !== 'HEAD') {
     res.writeHead(405, {
@@ -281,16 +391,31 @@ function handle(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
 
-  if (!existsSync(join(publicDir(), 'api/v1/index.json'))) {
-    // Nothing has ever been published: degraded, but the process stays up.
-    if (isApi || pathname === '/') {
+  // "Nothing published yet" is per-namespace. An instance may run only the
+  // portal publisher (the testnet deployment does), in which case the observer
+  // manifest never exists — gating every /api/ path on it would 503 the whole
+  // service forever.
+  const namespacePublished = isPortal
+    ? portalPublished()
+    : existsSync(join(publicDir(), 'api/v1/index.json'));
+
+  if (!namespacePublished) {
+    // Degraded, but the process stays up.
+    if (isApi) {
+      sendJson(res, 503, { error: 'not_published', path: pathname });
+      return;
+    }
+    if (pathname === '/') {
       sendJson(res, 503, { error: 'not_published' });
       return;
     }
   }
 
   const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
-  const file = readFile(absolute, acceptsGzip, manifestEtags().get(pathname));
+  const etag = isPortal
+    ? readPortalCache().etags.get(pathname)
+    : manifestEtags().get(pathname);
+  const file = readFile(absolute, acceptsGzip, etag);
   if (!file) {
     if (isApi) sendJson(res, 404, { error: 'not_found', path: pathname });
     else sendHtml(res, 404, '<!doctype html><title>404</title><h1>404 — not found</h1>');
@@ -350,6 +475,12 @@ function main(): void {
     console.log(`   GET /api/v1/observers.json observer independence`);
     console.log(`   GET /api/v1/findings.json  findings`);
     console.log(`   GET /api/v1/epochs/<n>.json`);
+    console.log(`   GET /api/v1/portal/index.json     portal manifest`);
+    console.log(`   GET /api/v1/portal/gateways.json  portal gateway roster`);
+    console.log(`   GET /api/v1/portal/vaults.json    portal vaults`);
+    console.log(`   GET /api/v1/portal/balances.json  portal balances`);
+    console.log(`   GET /api/v1/portal/delegates.json portal delegations`);
+    console.log(`   GET /api/v1/portal/summary.json   portal scalars + counts`);
     console.log(`   GET /archive/<date>/...`);
     console.log(`   GET /healthz`);
   });

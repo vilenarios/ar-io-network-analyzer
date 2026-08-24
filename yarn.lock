@@ -2,12 +2,12 @@
 # yarn lockfile v1
 
 
-"@ar.io/sdk@4.0.2":
-  version "4.0.2"
-  resolved "https://registry.npmjs.org/@ar.io/sdk/-/sdk-4.0.2.tgz"
-  integrity sha512-jECDYNG8NaJ50tH2SeI0LXe2DguQFqs+A9uUoffgoMhB/8eQAFFaw06knI7rC3uiNFd1eftWB0FSPh+d+Zgbxw==
+"@ar.io/sdk@4.1.0-alpha.2":
+  version "4.1.0-alpha.2"
+  resolved "https://registry.yarnpkg.com/@ar.io/sdk/-/sdk-4.1.0-alpha.2.tgz#ffba125940fd7e5f4f8be252a447fae1f84b0dcb"
+  integrity sha512-dTLhjX8HNGSIcUmx7VfszqmpsAeL+uZgmekMqnPmT/FlUUBIsTSEA1DBzowdpJJe9Yx67ZbH13jz7OTJI6or4Q==
   dependencies:
-    "@ar.io/solana-contracts" "1.0.0"
+    "@ar.io/solana-contracts" "1.0.1"
     "@noble/hashes" "^1.8.0"
     "@solana-program/address-lookup-table" "^0.11.0"
     "@solana-program/compute-budget" "^0.15.0"
@@ -19,10 +19,10 @@
     prompts "^2.4.2"
     zod "^3.25.76"
 
-"@ar.io/solana-contracts@1.0.0":
-  version "1.0.0"
-  resolved "https://registry.npmjs.org/@ar.io/solana-contracts/-/solana-contracts-1.0.0.tgz"
-  integrity sha512-/rmxIyViK9USkedcn4zrHWkg+tGBE160PSbJ2xwEcugtXDSOf5Cc0E6R8YoG7HT5oKkU0QY1QEeSeVvcYgMYBQ==
+"@ar.io/solana-contracts@1.0.1":
+  version "1.0.1"
+  resolved "https://registry.yarnpkg.com/@ar.io/solana-contracts/-/solana-contracts-1.0.1.tgz#1a16958d54540222b77def81d5d39e7402b8b69c"
+  integrity sha512-zD7OepkzzWb1SIHRDxSo3y+dzRh9gu+43eI2DBJLtQ+7EkT3Py8v9kHQ40UcRC8CReHHTO74RDty6Hwx5JYVGA==
   dependencies:
     "@noble/hashes" "^1.5.0"
     bs58 "^6.0.0"

@@ -5,6 +5,7 @@ TypeScript tools for detecting and analyzing centralization patterns in the Arwe
 1. **AR.IO Gateway Analyzer** — Identifies clusters of AR.IO gateways that may be controlled by the same operators using domain, geographic, network, temporal, stake, and technical fingerprint analysis.
 2. **Arweave Node Analyzer** — Crawls the Arweave base layer peer network and analyzes infrastructure distribution, peer graph topology, and geographic concentration.
 3. **Observer Independence Indexer** — Continuously captures on-chain `Observation` accounts and detects observers that are not independent of one another. See below, plus [docs/observer-independence.md](docs/observer-independence.md) and [docs/operations.md](docs/operations.md).
+4. **Portal Snapshot API** — Publishes the whole-program scans the AR.IO network portal would otherwise run in every visitor's browser, as static JSON. See [docs/portal-api.md](docs/portal-api.md).
 
 ## Installation
 
@@ -297,3 +298,27 @@ MIT License — See LICENSE file for details.
 ## Acknowledgments
 
 Built for the AR.IO network community to promote transparency and decentralization.
+
+### Portal Snapshot API
+
+The network portal ran `getProgramAccounts` over whole Solana programs from
+every visitor's browser, so RPC cost scaled with traffic. This publishes those
+scans as static documents on a cadence — `visitors × N` scans becomes a flat
+`N × 144/day`.
+
+```bash
+yarn portal            # the publisher daemon (10-minute cadence)
+yarn portal:once       # one cycle, then exit
+yarn portal:status     # freshness, without touching the network
+yarn portal:loadtest   # capacity check against a published snapshot
+```
+
+Documents are served under `/api/v1/portal/` — `gateways`, `vaults`,
+`balances`, `delegates`, `summary`, plus an `index.json` manifest. The whole
+mainnet network state is ~280 KB gzipped.
+
+**The RPC endpoint for this service must not have a referrer allowlist.** It is
+a server process: it sends no browser `Referer`, and `@solana/kit` refuses to
+set one, so a referrer-restricted endpoint returns 401 whatever the auth
+method. Use an IP allowlist, and do not reuse the endpoint the portal ships in
+its browser bundle. Full reasoning in [docs/portal-api.md](docs/portal-api.md).

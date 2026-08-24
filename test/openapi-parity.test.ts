@@ -12,6 +12,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PORTAL_DOCUMENTS, portalDocumentPath } from '../src/portal/contract.js';
+import { routeToFile } from '../src/server/index.js';
 
 const SPEC = join(import.meta.dirname, '..', 'docs', 'openapi.yaml');
 
@@ -34,6 +36,12 @@ const SERVED = [
   '/api/v1/findings.json',
   '/api/v1/observers.json',
   '/api/v1/epochs/{epochIndex}.json',
+  '/api/v1/portal/index.json',
+  '/api/v1/portal/gateways.json',
+  '/api/v1/portal/vaults.json',
+  '/api/v1/portal/balances.json',
+  '/api/v1/portal/delegates.json',
+  '/api/v1/portal/summary.json',
   '/healthz',
 ];
 
@@ -63,4 +71,41 @@ test('the spec records the two properties a consumer would otherwise get wrong',
   assert.match(src, /pairsTruncated/, 'pair truncation must be documented');
   assert.match(src, /FindingsWindow/, 'feed windowing must be documented');
   assert.match(src, /calibrated/, 'the calibration caveat must be documented');
+});
+
+/**
+ * The list above is maintained by hand, which is exactly how the two observer
+ * documents (`network.json`, `gateways.json`) drifted: routable, undocumented,
+ * and invisible to a literal-list check. For the portal namespace the contract
+ * is the source of truth, so derive the expectation from it instead.
+ */
+test('every portal document in the contract is routable and documented', () => {
+  const documented = specPaths();
+
+  for (const name of [...PORTAL_DOCUMENTS, 'index'] as const) {
+    const path = `/${portalDocumentPath(name)}`;
+
+    assert.equal(
+      routeToFile(path),
+      portalDocumentPath(name),
+      `${path} is in the contract but the server does not route it`
+    );
+    assert.ok(documented.includes(path), `${path} is in the contract but openapi.yaml omits it`);
+  }
+});
+
+test('the portal namespace rejects names outside the contract', () => {
+  // A loose `(.*)` here would turn the document namespace into a path probe.
+  assert.equal(routeToFile('/api/v1/portal/secrets.json'), null);
+  assert.equal(routeToFile('/api/v1/portal/../index.json'), null);
+  assert.equal(routeToFile('/api/v1/portal/gateways.json.gz'), null);
+});
+
+test('the portal contract documents the freshness contract a consumer needs', () => {
+  const src = readFileSync(SPEC, 'utf8');
+  // A consumer that ignores staleness cannot tell a snapshot published a
+  // minute ago from one that stopped updating hours ago.
+  assert.match(src, /freshness\.stale/, 'staleness must be documented for consumers');
+  assert.match(src, /consecutiveFailures/, 'failure counting must be documented');
+  assert.match(src, /mARIO/, 'balance units must be documented');
 });
