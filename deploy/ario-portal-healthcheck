@@ -1,0 +1,77 @@
+#!/bin/bash
+# Alerting for the portal snapshot API, per docs/portal-api.md section 7.
+#
+# Alert conditions (all read from /healthz):
+#   portal.stale == true              - snapshot stopped updating (two missed cycles)
+#   portal.consecutiveFailures > 2    - publisher running but failing; usually
+#                                       endpoint-side (token, IP allowlist, 429)
+#   portal.published == false         - never completed a cycle
+#
+# Explicitly NOT an alert: a single failed cycle. One failure is normal - the
+# publisher keeps the previous documents and retries - so consecutiveFailures
+# of 1 or 2 is silent by design.
+#
+# Notifies only on STATE CHANGE (ok->bad, bad->ok). A timer firing every five
+# minutes against a condition that persists for hours would otherwise emit a
+# notification every five minutes, which trains people to ignore it.
+set -uo pipefail
+
+STATE_DIR=/var/lib/ario-portal-api/.alert-state
+mkdir -p "$STATE_DIR"
+[ -f /etc/ario-portal-api/alerts.env ] && . /etc/ario-portal-api/alerts.env
+
+declare -A PORTS=( [prod]=8787 [testnet]=8788 )
+rc=0
+
+notify() {
+  local sev="$1" inst="$2" msg="$3"
+  logger -t ario-portal-alert -p "daemon.${sev}" -- "[${inst}] ${msg}"
+  echo "[${sev}] [${inst}] ${msg}"
+  if [ -n "${PORTAL_ALERT_SLACK_WEBHOOK:-}" ]; then
+    local text; text=$(printf 'AR.IO portal API [%s] %s: %s' "$inst" "$sev" "$msg")
+    curl -sS -m 10 -X POST -H 'Content-type: application/json' \
+      --data "$(python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$text")" \
+      "$PORTAL_ALERT_SLACK_WEBHOOK" >/dev/null || \
+      logger -t ario-portal-alert -p daemon.err -- "slack notify failed for ${inst}"
+  fi
+}
+
+for inst in "${!PORTS[@]}"; do
+  # Only instances that are supposed to be publishing.
+  systemctl is-enabled --quiet "ario-portal-publish@${inst}" 2>/dev/null || continue
+
+  port="${PORTS[$inst]}"
+  state_file="${STATE_DIR}/${inst}"
+  prev=$(cat "$state_file" 2>/dev/null || echo ok)
+
+  body=$(curl -sS -m 10 "http://127.0.0.1:${port}/healthz" 2>/dev/null)
+  if [ -z "$body" ]; then
+    problem="/healthz unreachable on port ${port}"
+  else
+    problem=$(python3 - "$body" <<'PY'
+import json, sys
+try:
+    p = json.loads(sys.argv[1]).get('portal', {})
+except Exception as e:
+    print(f'/healthz returned unparseable JSON: {e}'); sys.exit()
+if p.get('published') is not True:
+    print(f"portal.published is {p.get('published')!r} - publisher has never completed a cycle"); sys.exit()
+if p.get('stale') is True:
+    print(f"portal.stale is true - snapshot age {p.get('ageSeconds')}s, last success {p.get('lastSuccessAt')}"); sys.exit()
+cf = p.get('consecutiveFailures', 0) or 0
+if cf > 2:
+    print(f"portal.consecutiveFailures is {cf} - publisher running but failing; check the endpoint (token, IP allowlist, rate limit)"); sys.exit()
+PY
+)
+  fi
+
+  if [ -n "$problem" ]; then
+    rc=1
+    [ "$prev" != "bad" ] && notify warning "$inst" "$problem"
+    echo bad > "$state_file"
+  else
+    [ "$prev" = "bad" ] && notify notice "$inst" "recovered - portal.published true, not stale, consecutiveFailures within tolerance"
+    echo ok > "$state_file"
+  fi
+done
+exit $rc

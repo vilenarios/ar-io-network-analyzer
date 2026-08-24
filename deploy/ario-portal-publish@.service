@@ -19,7 +19,17 @@ WorkingDirectory=/programs/ar-io-network-analyzer
 
 # Carries SOLANA_RPC_URL, which may hold a provider token. Root-owned, 0600.
 EnvironmentFile=/etc/ario-portal-api/%i.env
+# yarn resolves its global folder from HOME. A dedicated service account
+# usually has no home directory, and without this yarn logs
+# 'Cannot find a suitable global folder' on every start.
+Environment=HOME=/var/lib/ario-portal-api/%i
 # systemd does not inherit a login PATH; nvm's node must be named explicitly.
+# HOST-SPECIFIC: this path, and User=/Group= above, are whatever the host
+# that first ran this happened to have. Check both against `which node` and
+# an existing account before enabling — a mismatch fails at exec with no
+# message that names the path. Override per host with a drop-in rather than
+# editing this file:
+#   systemctl edit ario-portal-publish@prod
 Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
 
 ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn portal

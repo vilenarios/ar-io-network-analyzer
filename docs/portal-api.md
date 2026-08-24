@@ -142,6 +142,45 @@ sudo ln -s /etc/nginx/sites-available/portal-api /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+### If the host has no load balancer
+
+`deploy/nginx-portal-api.conf` assumes `load balancer -> nginx -> disk`, with
+TLS terminating at the balancer. On a host that is itself the public address —
+which is the case for the AR.IO services box, where every sibling service
+terminates TLS locally with nginx + Let's Encrypt — installing it unchanged
+publishes the API **unencrypted on port 80**, which its own header comment
+forbids. On such a host:
+
+- Give each vhost `listen 443 ssl` with a Let's Encrypt certificate, and keep
+  `listen 80` only for the ACME challenge and a 301 redirect.
+- **Delete `set_real_ip_from` and `real_ip_header`, do not re-point them.**
+  With no trusted proxy in front, `$remote_addr` is already the true client
+  address; leaving `real_ip_header X-Forwarded-For` in place would let any
+  client set the header itself and walk straight past `limit_req`. There is no
+  subnet to fill in — the correct value is no directive at all.
+- Use `proxy_set_header X-Forwarded-Proto $scheme` on `/healthz`, not
+  `$http_x_forwarded_proto`: TLS ends here, so the client's header is
+  untrusted input rather than a balancer's statement.
+- Split the two vhosts into separate site files if their DNS lands at
+  different times — nginx will not load a config whose `ssl_certificate` path
+  does not exist yet, so one missing cert otherwise blocks both. Move the
+  shared `limit_req_zone` to `conf.d/` so it is declared exactly once.
+
+### Host portability of the units
+
+`User=`, `Group=` and the two absolute node paths in the unit files are
+whatever the host that first ran this happened to have (`vilenarios`, an nvm
+install under `/home/vilenarios`). They are **not** portable, and the runbook's
+`chown -R vilenarios:vilenarios` is not either. On a new host, create a
+dedicated service account, put node somewhere every account can read (an nvm
+tree under `/root` is mode 700 and unreadable to a service user), and override
+the unit with a drop-in rather than editing the shipped file:
+
+```bash
+useradd --system --no-create-home --shell /usr/sbin/nologin ario-portal
+systemctl edit ario-portal-publish@prod     # User=, Group=, PATH=, ExecStart=
+```
+
 Two values in the nginx config must be set for this host before it is correct:
 
 - **`set_real_ip_from`** defaults to `10.0.0.0/8` as a placeholder. Set it to the
@@ -176,6 +215,16 @@ that must differ lives there:
 | `PUBLIC_DIR` | `/var/lib/ario-portal-api/prod/public` | `…/testnet/public` |
 | `PORT` | 8787 | 8788 |
 
+**Program ids are per-cluster and are not configured here.** The SDK's defaults
+are mainnet's; every other cluster deploys its programs at addresses derived
+from its own keypair files, and `ARIOConfig` documents `coreProgramId` /
+`garProgramId` / `arnsProgramId` / `antProgramId` as **required** off mainnet.
+`initSolanaArio()` selects them from `DEVNET_PROGRAM_IDS` whenever the network
+is not mainnet, so `PORTAL_NETWORK` (or a host that encodes the cluster) is
+what drives them. Setting `PORTAL_NETWORK=mainnet` on a devnet endpoint, or
+leaving the network `unknown`, scans devnet for mainnet PDAs and fails on the
+first call — see §8.
+
 Sharing a `PUBLIC_DIR` between instances would have each overwrite the other's
 documents with a different network's data, which would look like data
 corruption rather than a config error. They must differ.
@@ -205,6 +254,29 @@ PUBLIC_DIR=/var/lib/ario-portal-api/prod/public yarn portal:loadtest
 LOAD_TARGET=https://network.services.ar.io yarn portal:loadtest   # through nginx
 ```
 
+**The second command cannot meet the zero-failures bar against the shipped
+nginx config, and that is the rate limiter working, not a regression.** The
+load test drives 100 concurrent clients from one address; `limit_req` allows
+30r/s with `burst=60` per address, so nginx correctly 503s the remainder. On
+this deployment the run reported ~77,000 failures, all of them `limiting
+requests` in the error log.
+
+To measure nginx's actual serving capacity, point the load test at a temporary
+vhost with the same `root`/`gzip_static`/`sendfile` blocks and the `limit_req`
+line removed, on a loopback port. Measured that way on the services box:
+
+| Path | Cold | Warm (304s) | Failures |
+|---|---|---|---|
+| Node directly | 760 req/s | 5,727 req/s | 0 |
+| nginx, limiter removed | 809 req/s | 5,989 req/s | 0 |
+
+Note that nginx's margin over Node is small here — this is a 4 GB shared box
+and both are far from the disk. The reference figures in the table above (950 /
+10,441) came from a development machine; treat them as a shape, not a target.
+
+To load-test through the real vhost instead, raise the limit for the duration
+or drive it from enough distinct source addresses that no single one exceeds
+30r/s.
 A small Hetzner instance is comfortable here. At ~280 KB per full visitor load,
 20 TB of monthly traffic is roughly 75 million full loads; the whole dataset is
 under a megabyte and stays in page cache.
@@ -221,7 +293,28 @@ Alert on `/healthz`:
   the publisher has never completed a cycle.
 
 Do not alert on a single failed cycle. One failure is normal; the publisher
-keeps the previous documents and retries.
+keeps the previous documents and retries. `consecutiveFailures` of 1 or 2 is
+silent by design; 3 is the first alert.
+
+`deploy/ario-portal-healthcheck` implements exactly these three rules, plus the
+two failure modes that are not in `/healthz` at all because they stop it
+answering: an unreachable port and an unparseable body. Install it with its
+timer:
+
+```bash
+sudo install -m 755 deploy/ario-portal-healthcheck /usr/local/bin/
+sudo install -m 644 deploy/ario-portal-healthcheck.service /etc/systemd/system/
+sudo install -m 644 deploy/ario-portal-healthcheck.timer   /etc/systemd/system/
+sudo systemctl enable --now ario-portal-healthcheck.timer
+```
+
+It checks only instances whose publisher unit is `enabled`, so a box running
+prod alone does not alert about a testnet that was never deployed. It notifies
+on **state change** rather than on every check — a five-minute timer against a
+condition that persists for hours would otherwise emit a notification every
+five minutes, which trains people to ignore it — and emits a matching recovery
+notice. Alerts go to the journal (`journalctl -t ario-portal-alert`), and also
+to Slack if `PORTAL_ALERT_SLACK_WEBHOOK` is set in `/etc/ario-portal-api/alerts.env`.
 
 ## 8. Recovery
 
@@ -236,6 +329,24 @@ yarn portal:status            # freshness without touching the network
 The log line names the failure. The common ones are all endpoint-side: `401`
 (token rotated, or the endpoint gained a referrer allowlist), `403` (method
 blocked), `429` (rate limited — raise the interval or the provider limit).
+
+### `ArioConfig not found at <redacted-token> on coreProgram <redacted-token>`
+
+The program ids are wrong for the cluster the endpoint serves — almost always a
+non-mainnet endpoint running with mainnet program ids (see §5). Check that
+`PORTAL_NETWORK` matches the endpoint, and that `initSolanaArio()` is passing
+the `DEVNET_PROGRAM_IDS` overrides.
+
+The `<redacted-token>` placeholders are `scrubSecrets()`, not corruption: its
+`\b[A-Za-z0-9_-]{32,}\b` rule matches any 32+ character alphanumeric run, and
+every base58 Solana address is 32–44 characters. So **every program id and PDA
+in an error message is redacted**, which makes exactly the errors that name an
+address the hardest ones to read. The addresses involved are public constants,
+not secrets. Until that is narrowed, recover them with:
+
+```bash
+node -e "const s=require('@ar.io/sdk');console.log(s.DEVNET_PROGRAM_IDS,s.MAINNET_PROGRAM_IDS)"
+```
 
 ### The publisher refuses to publish
 
@@ -275,8 +386,23 @@ For anyone building against this, including the portal:
   the documents in place and records the failure there. Ignoring it makes a
   snapshot from a minute ago indistinguishable from one that stopped updating
   hours ago.
-- **Send `If-None-Match`.** ETags are the published sha256 digests, so
-  revalidation is cheap and correct.
+- **Send `If-None-Match`, and treat the ETag as opaque — echo back exactly
+  what you received.** The Node fallback sets the ETag to the document's
+  published sha256, but nginx serves these files off disk and stamps its own
+  `"<mtime>-<size>"` validator, so the two paths return *different* ETags for
+  identical bytes. Revalidation is correct either way as long as you echo the
+  value the response gave you. What does **not** work is taking the `sha256`
+  out of `index.json` and sending that as `If-None-Match`: through nginx — the
+  production path — it matches nothing and you get a 200 with the full body.
+  Verified against this deployment:
+
+  | Request | Node (fallback) | nginx (production) |
+  |---|---|---|
+  | `If-None-Match:` echoed from the response | 304 | 304 |
+  | `If-None-Match:` set to the manifest `sha256` | 304 | **200, full download** |
+
+  The `sha256` in the manifest is for **integrity**, not revalidation. Use it
+  to verify bytes you fetched; do not use it as a cache validator.
 - **Balances are in mARIO**, as on chain. Convert at the display boundary.
 - **Fall back to direct RPC** when a document is missing, stale beyond your
   tolerance, or the service is unreachable. This service must never be a hard
