@@ -7,6 +7,21 @@
  * document therefore never sees a manifest describing bytes that are not on
  * disk yet.
  *
+ * The ordering is deliberately one-sided, and the exposure is worth naming: a
+ * crash between the first document and the manifest leaves documents NEWER
+ * than the manifest that describes them. Nothing is torn — every file is a
+ * complete document from some cycle — but the manifest's digests no longer
+ * match the bytes on disk, and those digests are what the Node server serves
+ * as ETags. A consumer can therefore be handed a body under an ETag that does
+ * not describe it, and a `If-None-Match` revalidation can return 304 for
+ * content that has in fact changed. It self-heals on the next successful
+ * cycle (<= one interval), and nginx is unaffected because it stamps its own
+ * validator from mtime+size rather than reading the manifest.
+ *
+ * The alternative — manifest first — is strictly worse: it would advertise
+ * digests for bytes that are not on disk at all, turning a stale ETag into a
+ * 404.
+ *
  * A failed cycle rewrites the manifest and nothing else. The documents stay as
  * they were — they are still the best data available — but the manifest says
  * so, because a publisher that has been failing for six hours would otherwise
@@ -82,7 +97,7 @@ export function readPortalManifest(): PortalManifest | null {
 }
 
 /**
- * Write all five documents plus the manifest.
+ * Write all eight documents plus the manifest.
  *
  * `generatedAt` is taken once and stamped on every document so a consumer can
  * tell the set is internally consistent — documents each carrying their own

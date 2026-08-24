@@ -36,8 +36,8 @@ publish time.
 | `arnsRecords.json` | every ArNS record | ~163 KB |
 | `summary.json` | token supply, demand factor, registry settings, counts | ~1 KB |
 
-**~512 KB gzipped for the entire network state**, of which `arnsRecords.json`
-is ~163 KB. A consumer that only needs the name *count* should read
+**~494 KB gzipped for the entire network state** (measured 2026-08-24), of
+which `arnsRecords.json` is ~163 KB. A consumer that only needs the name *count* should read
 `summary.json` and never fetch it.
 
 `vaults.json` and `withdrawals.json` are different datasets, not two views of
@@ -240,9 +240,19 @@ that must differ lives there:
 | Variable | prod | testnet |
 |---|---|---|
 | `SOLANA_RPC_URL` | mainnet endpoint | devnet endpoint |
-| `PORTAL_NETWORK` | `mainnet` | `devnet` |
+| `PORTAL_NETWORK` **(required)** | `mainnet` | `devnet` |
 | `PUBLIC_DIR` | `/var/lib/ario-portal-api/prod/public` | `…/testnet/public` |
 | `PORT` | 8787 | 8788 |
+
+**`PORTAL_NETWORK` is required, not a hint.** The publisher refuses to start
+if it is unset *and* the endpoint host does not literally contain a cluster
+name — an internal resolver, a vanity domain, or a provider with domain masking
+enabled all hit this. The refusal is deliberate: this repo's inference falls
+back to `unknown`, the network portal's falls back to **`mainnet`**, and the
+portal rejects any document whose `network` disagrees with its own answer. So
+publishing `unknown` means every snapshot is silently refused while the
+publisher keeps succeeding, `/healthz` stays green and no alert fires. A hard
+startup failure is the only version of this that anyone finds out about.
 
 **Program ids are per-cluster and are not configured here.** The SDK's defaults
 are mainnet's; every other cluster deploys its programs at addresses derived
@@ -276,6 +286,26 @@ That is the **Node** server, which reads each file synchronously per request.
 nginx with `sendfile` and `gzip_static` is materially faster and is what serves
 documents in production.
 
+### Testing the path production actually uses
+
+`test/portal-e2e.test.ts` spawns the **Node** server. In production nginx serves
+everything under `/api/v1/` off disk and Node only sees `/healthz`, so those
+assertions describe a supported fallback, not what users receive. The visible
+difference is the ETag: Node sends the document's published sha256, nginx sends
+its own `"<mtime>-<size>"`.
+
+`test/portal-nginx.test.ts` covers the production path and is opt-in, because it
+needs a live nginx with published documents:
+
+```bash
+PORTAL_NGINX_BASE=https://network.services.ar.io yarn test
+```
+
+Without the variable those tests **skip** rather than pass. Run it after any
+change to `deploy/nginx-portal-api.conf` — it is what catches a header dropped
+from the manifest's nested `location` block, which is otherwise invisible until
+a browser rejects the one document every consumer polls.
+
 Rerun it any time:
 
 ```bash
@@ -306,9 +336,14 @@ and both are far from the disk. The reference figures in the table above (950 /
 To load-test through the real vhost instead, raise the limit for the duration
 or drive it from enough distinct source addresses that no single one exceeds
 30r/s.
-A small Hetzner instance is comfortable here. At ~280 KB per full visitor load,
-20 TB of monthly traffic is roughly 75 million full loads; the whole dataset is
-under a megabyte and stays in page cache.
+A small Hetzner instance is comfortable here. At **~494 KB per full visitor
+load** (all eight documents plus the manifest, gzipped — measured on mainnet
+2026-08-24), 20 TB of monthly traffic is roughly **43 million** full loads. The
+whole dataset is well under a megabyte and stays in page cache.
+
+Very few consumers pull the full set. `arnsRecords.json` alone is ~163 KB of
+that; a client that only needs the name *count* reads it from `summary.json`
+and never fetches the document, which puts a realistic load at ~331 KB.
 
 ## 7. Alerting
 
@@ -402,8 +437,22 @@ every portal document is re-derivable from chain at any time. Run
 It cannot be observed as torn: each document is written scratch → fsync →
 rename, and the manifest is written last. A consumer reading the manifest and
 then a document never sees a manifest describing bytes that are not on disk.
-All six documents carry one `generatedAt` so a client can confirm the set is
+All eight documents carry one `generatedAt` so a client can confirm the set is
 internally consistent.
+
+**One exposure this does not cover.** A crash *between* the first document and
+the manifest leaves documents newer than the manifest describing them. Nothing
+is torn — every file is complete — but the manifest's digests no longer match
+the bytes on disk, and the Node fallback serves those digests as ETags. A
+consumer can be handed a body under an ETag that does not describe it, and a
+revalidation can answer 304 for content that changed. It resolves itself on the
+next successful cycle (at most one interval), and **nginx is unaffected**: it
+stamps its own validator from mtime+size and never reads the manifest. Since
+nginx serves every document in production, this is a fallback-path exposure
+only.
+
+The alternative ordering is worse: manifest first would advertise digests for
+bytes that are not on disk at all, turning a stale ETag into a 404.
 
 ## 9. Consumer contract
 

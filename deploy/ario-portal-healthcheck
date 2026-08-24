@@ -20,20 +20,52 @@ STATE_DIR=/var/lib/ario-portal-api/.alert-state
 mkdir -p "$STATE_DIR"
 [ -f /etc/ario-portal-api/alerts.env ] && . /etc/ario-portal-api/alerts.env
 
-declare -A PORTS=( [prod]=8787 [testnet]=8788 )
+# Instances and their ports come from the env files, not a hardcoded map:
+# changing PORT in an instance env used to leave this script probing the old
+# port and reporting a healthy service as unreachable — a false alert that
+# looks exactly like a real outage.
+declare -A PORTS=()
+for envfile in /etc/ario-portal-api/*.env; do
+  [ -e "$envfile" ] || continue
+  inst=$(basename "$envfile" .env)
+  [ "$inst" = "alerts" ] && continue          # not an instance
+  port=$(grep -m1 '^PORT=' "$envfile" 2>/dev/null | cut -d= -f2 | tr -dc '0-9')
+  [ -n "$port" ] && PORTS["$inst"]="$port"
+done
+if [ ${#PORTS[@]} -eq 0 ]; then
+  echo "no instances found in /etc/ario-portal-api/*.env" >&2
+  exit 2
+fi
 rc=0
 
+# Returns non-zero when a configured Slack webhook could not be reached, so the
+# caller can leave the state file untouched and retry on the next tick. The
+# journal line is always written first — it is local and cannot fail — so a
+# Slack outage degrades to journal-only rather than losing the alert.
 notify() {
   local sev="$1" inst="$2" msg="$3"
   logger -t ario-portal-alert -p "daemon.${sev}" -- "[${inst}] ${msg}"
   echo "[${sev}] [${inst}] ${msg}"
   if [ -n "${PORTAL_ALERT_SLACK_WEBHOOK:-}" ]; then
-    local text; text=$(printf 'AR.IO portal API [%s] %s: %s' "$inst" "$sev" "$msg")
+    # The webhook is shared with the claims app, so the message must identify
+    # itself. `username`/`icon_emoji` are honoured only by legacy custom-
+    # integration webhooks — a modern Slack app webhook ignores them and posts
+    # under the owning app's name. They are set anyway (harmless if ignored),
+    # but the ":satellite: *AR.IO Portal API*" prefix in the text is what
+    # actually distinguishes these from claims notifications in either case.
+    local text; text=$(printf ':satellite: *AR.IO Portal API* [%s] %s: %s' "$inst" "$sev" "$msg")
     curl -sS -m 10 -X POST -H 'Content-type: application/json' \
-      --data "$(python3 -c 'import json,sys;print(json.dumps({"text":sys.argv[1]}))' "$text")" \
-      "$PORTAL_ALERT_SLACK_WEBHOOK" >/dev/null || \
-      logger -t ario-portal-alert -p daemon.err -- "slack notify failed for ${inst}"
+      --data "$(python3 -c 'import json,sys;print(json.dumps({
+        "text": sys.argv[1],
+        "username": "AR.IO Portal API",
+        "icon_emoji": ":satellite:"}))' "$text")" \
+      "$PORTAL_ALERT_SLACK_WEBHOOK" >/dev/null || {
+      logger -t ario-portal-alert -p daemon.err -- \
+        "slack notify failed for ${inst}; will retry next tick"
+      return 1
+    }
   fi
+  return 0
 }
 
 for inst in "${!PORTS[@]}"; do
@@ -48,12 +80,27 @@ for inst in "${!PORTS[@]}"; do
   if [ -z "$body" ]; then
     problem="/healthz unreachable on port ${port}"
   else
-    problem=$(python3 - "$body" <<'PY'
+    problem=$(python3 - "$body" "$inst" <<'PY'
 import json, sys
 try:
-    p = json.loads(sys.argv[1]).get('portal', {})
+    doc = json.loads(sys.argv[1])
 except Exception as e:
     print(f'/healthz returned unparseable JSON: {e}'); sys.exit()
+p = doc.get('portal', {})
+
+# Observation capture, where it is deployed. Alert only on STALENESS - the
+# daemon has stopped completing cycles - because a missed epoch is permanent
+# loss (observation accounts are swept off chain within days).
+#
+# Deliberately NOT alerting on the ZERO_ACCOUNTS anomaly. As of 2026-08-24 the
+# network itself reports observations_submitted=0 for the current epoch, so
+# capture correctly returns zero every cycle. Paging on it would fire forever
+# for a condition no operator action can fix; it stays visible in /healthz.
+cap = doc.get('capture', {})
+if cap.get('status') not in (None, 'unknown'):
+    if cap.get('stale') is True:
+        print(f"capture is stale - last run {cap.get('lastRunAt')}, "
+              f"{cap.get('ageSeconds')}s ago; a missed epoch cannot be backfilled"); sys.exit()
 if p.get('published') is not True:
     print(f"portal.published is {p.get('published')!r} - publisher has never completed a cycle"); sys.exit()
 if p.get('stale') is True:
@@ -65,13 +112,24 @@ PY
 )
   fi
 
+  # State advances only when the notification for that transition was
+  # delivered. Writing it unconditionally meant a single failed Slack post
+  # swallowed the alert permanently: the state said "already told them", so
+  # nothing fired again until the condition cleared and re-broke.
   if [ -n "$problem" ]; then
     rc=1
-    [ "$prev" != "bad" ] && notify warning "$inst" "$problem"
-    echo bad > "$state_file"
+    if [ "$prev" != "bad" ]; then
+      notify warning "$inst" "$problem" && echo bad > "$state_file"
+    else
+      echo bad > "$state_file"
+    fi
   else
-    [ "$prev" = "bad" ] && notify notice "$inst" "recovered - portal.published true, not stale, consecutiveFailures within tolerance"
-    echo ok > "$state_file"
+    if [ "$prev" = "bad" ]; then
+      notify notice "$inst" "recovered - portal.published true, not stale, consecutiveFailures within tolerance" \
+        && echo ok > "$state_file"
+    else
+      echo ok > "$state_file"
+    fi
   fi
 done
 exit $rc

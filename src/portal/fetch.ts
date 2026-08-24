@@ -12,7 +12,7 @@
  */
 
 import { initSolanaArio } from '../data/gateway-fetcher.js';
-import { inferNetwork, type PortalNetwork, type PortalProgramIds } from './contract.js';
+import { resolvePortalNetwork, type PortalNetwork, type PortalProgramIds } from './contract.js';
 
 /** One call per document; the SDK paginates in memory, so this is one sweep each. */
 const FULL_SCAN = { limit: Number.MAX_SAFE_INTEGER } as const;
@@ -67,8 +67,10 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   const { ario, host, programIds } = await initSolanaArio();
 
   // An operator can state the network explicitly; otherwise it is inferred
-  // from the host, which for most providers encodes it.
-  const network = inferNetwork(process.env.PORTAL_NETWORK || host);
+  // from the host, which for most providers encodes it. Neither working is a
+  // hard failure rather than a `network: "unknown"` document that every
+  // consumer would silently refuse — see resolvePortalNetwork.
+  const network = resolvePortalNetwork(host);
 
   const gateways = items((await ario.getGateways(FULL_SCAN)) as Paged);
   const vaults = items((await ario.getVaults(FULL_SCAN)) as Paged);

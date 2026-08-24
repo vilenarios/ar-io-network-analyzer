@@ -4,7 +4,7 @@
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
 import { safeHost, scrubSecrets } from '../utils/runtime.js';
-import { inferNetwork } from '../portal/contract.js';
+import { resolvePortalNetwork } from '../portal/contract.js';
 
 /**
  * Build the SDK client.
@@ -27,9 +27,13 @@ export async function initSolanaArio() {
   // a devnet endpoint is scanned for mainnet PDAs and the first call fails
   // with `ArioConfig not found`, which reads like a dead endpoint rather than
   // a missing override.
-  const network = inferNetwork(process.env.PORTAL_NETWORK || rpcUrl);
+  // Resolved, not inferred: an unrecognised cluster used to fall through to
+  // the mainnet program ids below, which is the same silent guess this
+  // function exists to avoid — reading mainnet PDAs off another cluster
+  // returns plausible nonsense rather than an error.
+  const network = resolvePortalNetwork(rpcUrl);
   const programIds =
-    network === 'mainnet' || network === 'unknown'
+    network === 'mainnet'
       ? {}
       : {
           coreProgramId: DEVNET_PROGRAM_IDS.core,
@@ -43,9 +47,7 @@ export async function initSolanaArio() {
   // program ids are per-cluster, they can move on a redeploy, and a consumer
   // decoding accounts from the wrong program sees corruption rather than a
   // configuration mismatch.
-  const resolved = network === 'mainnet' || network === 'unknown'
-    ? MAINNET_PROGRAM_IDS
-    : DEVNET_PROGRAM_IDS;
+  const resolved = network === 'mainnet' ? MAINNET_PROGRAM_IDS : DEVNET_PROGRAM_IDS;
 
   return {
     ario: ARIO.init({ rpc, ...programIds }),

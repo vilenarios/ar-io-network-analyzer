@@ -10,6 +10,20 @@
  *
  * The server is spawned as a child process rather than imported, so what is
  * tested is the entry point that ships.
+ *
+ * ⚠️ **This exercises the FALLBACK path, not production.** In production nginx
+ * serves everything under `/api/v1/` straight off disk via `try_files`, and
+ * Node only ever receives `/healthz`. So every ETag / 304 / gzip / CORS /
+ * Cache-Control assertion below describes the Node server — which is a real
+ * supported path, but not the one users hit.
+ *
+ * The difference that matters: **this server sets the ETag to the document's
+ * published sha256; nginx stamps its own `"<mtime>-<size>"` validator.** A
+ * consumer that takes the digest from `index.json` and sends it as
+ * `If-None-Match` gets a 304 here and a 200 with the full body in production.
+ * The manifest-digest-as-ETag property is a property of the fallback only.
+ *
+ * `portal-nginx.test.ts` covers the production path against a real nginx.
  */
 
 import test from 'node:test';
