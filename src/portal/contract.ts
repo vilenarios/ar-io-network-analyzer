@@ -27,10 +27,11 @@
 
 import type { DocumentEntry } from '../publish/contract.js';
 
-// 1.1 adds `withdrawals`, `primaryNames` and `arnsRecords`. Additive only:
-// every 1.0 document keeps its path and shape, and consumers discover
-// documents from the manifest, so a 1.0 reader is unaffected.
-export const PORTAL_SCHEMA_VERSION = '1.1';
+// 1.2 adds `programIds` to the manifest and to every document envelope.
+// 1.1 added `withdrawals`, `primaryNames` and `arnsRecords`. Additive only:
+// every earlier document keeps its path and shape, and consumers discover
+// documents from the manifest, so an older reader is unaffected.
+export const PORTAL_SCHEMA_VERSION = '1.2';
 
 /** Every portal document lives under this prefix. */
 export const PORTAL_PREFIX = 'api/v1/portal';
@@ -61,6 +62,8 @@ export interface PortalManifest {
   generatedAt: string;
   /** Inferred from the RPC endpoint host. Never the endpoint itself. */
   network: PortalNetwork;
+  /** The programs every document in this manifest was derived from. */
+  programIds: PortalProgramIds;
   documents: Partial<Record<PortalDocumentName, DocumentEntry>>;
   freshness: {
     generatedAt: string;
@@ -75,6 +78,23 @@ export interface PortalManifest {
 export type PortalNetwork = 'mainnet' | 'devnet' | 'testnet' | 'localnet' | 'unknown';
 
 /**
+ * The Solana programs a document was derived from.
+ *
+ * Carried on the manifest AND on every document, because `network` alone is
+ * not enough to know what you are reading. Program ids are per-cluster, the
+ * SDK requires explicit overrides off mainnet, and a redeploy moves them. A
+ * consumer that decodes accounts from the wrong program does not get an
+ * error — it gets plausible nonsense. Stamping the ids makes a document
+ * self-describing and lets a consumer refuse a mismatch outright.
+ */
+export interface PortalProgramIds {
+  core: string;
+  gar: string;
+  arns: string;
+  ant: string;
+}
+
+/**
  * Common envelope. `count` is the item count and is always the length of
  * `items` — a consumer that reads one and paginates on the other cannot drift.
  */
@@ -82,6 +102,9 @@ export interface PortalCollectionDocument<T> {
   schemaVersion: string;
   generatedAt: string;
   network: PortalNetwork;
+  /** Repeated per document, not only in the manifest: documents are fetched
+   *  individually and are often cached or copied away from it. */
+  programIds: PortalProgramIds;
   count: number;
   items: T[];
 }
@@ -99,6 +122,7 @@ export interface PortalSummaryDocument {
   schemaVersion: string;
   generatedAt: string;
   network: PortalNetwork;
+  programIds: PortalProgramIds;
   counts: {
     gateways: number;
     vaults: number;

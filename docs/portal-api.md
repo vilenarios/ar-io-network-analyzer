@@ -432,6 +432,18 @@ For anyone building against this, including the portal:
 
   The `sha256` in the manifest is for **integrity**, not revalidation. Use it
   to verify bytes you fetched; do not use it as a cache validator.
+- **Check `programIds` before decoding.** Every document and the manifest name
+  the four Solana programs they were derived from (`core`, `gar`, `arns`,
+  `ant`). `network` alone is not enough: program ids are per-cluster, the SDK
+  requires explicit overrides off mainnet, and a redeploy moves them. A client
+  that decodes accounts from the wrong program does not get an error — it gets
+  plausible nonsense. Compare against the ids your client is configured with
+  and refuse a mismatch, the same way you would refuse a wrong `network`.
+
+  They are repeated on every document rather than only in the manifest because
+  documents are fetched individually and are often cached or copied away from
+  it.
+
 - **Balances are in mARIO**, as on chain. Convert at the display boundary.
 - **Fall back to direct RPC** when a document is missing, stale beyond your
   tolerance, or the service is unreachable. This service must never be a hard

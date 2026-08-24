@@ -10,7 +10,7 @@
  * Publishes `observers.json`, `findings.json` and the per-epoch documents.
  */
 
-import { assertNodeVersion } from '../utils/runtime.js';
+import { assertNodeVersion, scrubSecrets } from '../utils/runtime.js';
 import { openWriter } from '../db/index.js';
 import {
   activeCalibration,
@@ -84,7 +84,9 @@ function runDetector(
   try {
     return detector.run(ctx);
   } catch (error) {
-    console.error(`❌ detector ${detector.kind} threw: ${(error as Error).message}`);
+    // scrubSecrets, not `.message`: a detector that touches the network can
+    // throw with a token-bearing URL inside the message, and this goes to a log.
+    console.error(`❌ detector ${detector.kind} threw: ${scrubSecrets(error)}`);
     return [
       makeFinding({
         kind: 'detector_error',
@@ -93,7 +95,10 @@ function runDetector(
         severity: 'info',
         confidence: 1,
         summary: `Detector ${detector.kind} failed for epoch ${ctx.epoch.epochIndex}.`,
-        detail: { detector: detector.kind, error: (error as Error).message },
+        // Worse than the log line above: this is PERSISTED into the findings
+        // table and then published in findings.json, so an unscrubbed message
+        // would ship a provider token to every consumer of the API.
+        detail: { detector: detector.kind, error: scrubSecrets(error) },
         now: ctx.now,
       }),
     ];

@@ -23,6 +23,7 @@ import {
   type PortalDocumentName,
   type PortalManifest,
   type PortalNetwork,
+  type PortalProgramIds,
   type PortalSummaryDocument,
   portalDocumentPath,
 } from '../portal/contract.js';
@@ -31,12 +32,14 @@ import type { PortalSnapshot } from '../portal/fetch.js';
 function collection<T>(
   items: T[],
   generatedAt: string,
-  network: PortalNetwork
+  network: PortalNetwork,
+  programIds: PortalProgramIds
 ): PortalCollectionDocument<T> {
   return {
     schemaVersion: PORTAL_SCHEMA_VERSION,
     generatedAt,
     network,
+    programIds,
     // Always the array length rather than a separately tracked total: a
     // consumer that trusts `count` and iterates `items` cannot disagree.
     count: items.length,
@@ -49,6 +52,7 @@ function summary(snapshot: PortalSnapshot, generatedAt: string): PortalSummaryDo
     schemaVersion: PORTAL_SCHEMA_VERSION,
     generatedAt,
     network: snapshot.network,
+    programIds: snapshot.programIds,
     counts: {
       gateways: snapshot.gateways.length,
       vaults: snapshot.vaults.length,
@@ -93,37 +97,37 @@ export function publishPortalDocuments(
   const documents: Partial<Record<PortalDocumentName, DocumentEntry>> = {
     gateways: writeDocument(
       portalDocumentPath('gateways'),
-      collection(snapshot.gateways, generatedAt, snapshot.network),
+      collection(snapshot.gateways, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     vaults: writeDocument(
       portalDocumentPath('vaults'),
-      collection(snapshot.vaults, generatedAt, snapshot.network),
+      collection(snapshot.vaults, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     balances: writeDocument(
       portalDocumentPath('balances'),
-      collection(snapshot.balances, generatedAt, snapshot.network),
+      collection(snapshot.balances, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     delegates: writeDocument(
       portalDocumentPath('delegates'),
-      collection(snapshot.delegates, generatedAt, snapshot.network),
+      collection(snapshot.delegates, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     withdrawals: writeDocument(
       portalDocumentPath('withdrawals'),
-      collection(snapshot.withdrawals, generatedAt, snapshot.network),
+      collection(snapshot.withdrawals, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     primaryNames: writeDocument(
       portalDocumentPath('primaryNames'),
-      collection(snapshot.primaryNames, generatedAt, snapshot.network),
+      collection(snapshot.primaryNames, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     arnsRecords: writeDocument(
       portalDocumentPath('arnsRecords'),
-      collection(snapshot.arnsRecords, generatedAt, snapshot.network),
+      collection(snapshot.arnsRecords, generatedAt, snapshot.network, snapshot.programIds),
       generatedAt
     ),
     summary: writeDocument(
@@ -137,6 +141,7 @@ export function publishPortalDocuments(
     schemaVersion: PORTAL_SCHEMA_VERSION,
     generatedAt,
     network: snapshot.network,
+    programIds: snapshot.programIds,
     documents,
     freshness: {
       generatedAt,

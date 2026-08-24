@@ -478,20 +478,41 @@ components:
 
     PortalManifest:
       type: object
-      required: [schemaVersion, generatedAt, network, documents, freshness]
+      required: [schemaVersion, generatedAt, network, programIds, documents, freshness]
       properties:
         schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
         generatedAt: { type: string, format: date-time }
         network: { $ref: '#/components/schemas/PortalNetwork' }
+        programIds: { $ref: '#/components/schemas/PortalProgramIds' }
         documents:
           type: object
           additionalProperties: { $ref: '#/components/schemas/DocumentRef' }
-          description: Keyed by document name — gateways, vaults, balances, delegates, summary.
+          description: |
+            Keyed by document name — gateways, vaults, balances, delegates,
+            withdrawals, primaryNames, arnsRecords, summary.
         freshness: { $ref: '#/components/schemas/PortalFreshness' }
+
+    PortalProgramIds:
+      type: object
+      required: [core, gar, arns, ant]
+      description: |
+        The Solana programs the document was derived from.
+
+        Carried on the manifest AND on every document. `network` alone is not
+        enough: program ids are per-cluster, the SDK requires explicit
+        overrides off mainnet, and a redeploy moves them. A consumer that
+        decodes accounts from the wrong program does not get an error, it gets
+        plausible nonsense — so compare these against the ids your client is
+        configured with and refuse a mismatch.
+      properties:
+        core: { type: string, description: ario-core program id }
+        gar:  { type: string, description: ario-gar program id }
+        arns: { type: string, description: ario-arns program id }
+        ant:  { type: string, description: ario-ant program id }
 
     PortalCollection:
       type: object
-      required: [schemaVersion, generatedAt, network, count, items]
+      required: [schemaVersion, generatedAt, network, programIds, count, items]
       description: |
         Envelope shared by every portal collection. `items` carries the SDK's
         decoded shape verbatim rather than a projection, so a consumer reading
@@ -500,6 +521,7 @@ components:
         schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
         generatedAt: { type: string, format: date-time }
         network: { $ref: '#/components/schemas/PortalNetwork' }
+        programIds: { $ref: '#/components/schemas/PortalProgramIds' }
         count:
           type: integer
           description: Always `items.length`. Never a separately tracked total.
@@ -509,11 +531,12 @@ components:
 
     PortalSummary:
       type: object
-      required: [schemaVersion, generatedAt, network, counts]
+      required: [schemaVersion, generatedAt, network, programIds, counts]
       properties:
         schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
         generatedAt: { type: string, format: date-time }
         network: { $ref: '#/components/schemas/PortalNetwork' }
+        programIds: { $ref: '#/components/schemas/PortalProgramIds' }
         counts:
           type: object
           required: [gateways, vaults, balances, delegates, arnsRecords]

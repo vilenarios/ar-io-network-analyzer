@@ -547,7 +547,11 @@ async function main(): Promise<void> {
   try {
     lock = acquireCaptureLock(db, interval);
   } catch (error) {
-    log('error', `❌ ${(error as Error).message}`);
+    // scrubSecrets, not `.message`: fetch failures against a token-bearing
+    // SOLANA_RPC_URL put the whole URL — token included — in the message, and
+    // this line is appended to a log file. Observed leaking a live QuickNode
+    // token on the previous host.
+    log('error', `❌ ${scrubSecrets(error)}`);
     db.close();
     process.exit(1);
   }
