@@ -29,6 +29,31 @@ export const SCHEMA_VERSION = '1.0';
 /** The bitmap encoding published documents advertise but never interpret. */
 export const GATEWAY_RESULTS_ENCODING = 'gar-bitmap-v1-lsb';
 
+/**
+ * The observer-namespace documents, at `/api/v1/<name>.json`.
+ *
+ * Distinct from `PORTAL_DOCUMENTS` (`/api/v1/portal/*`), which is the
+ * low-latency snapshot the network portal reads. These are the analysis
+ * outputs: the manifest, the daily centralization run (`network`, `gateways`)
+ * and the observer-independence work (`observers`, `findings`). Per-epoch
+ * documents live at `/api/v1/epochs/<n>.json` and are listed in the manifest.
+ *
+ * Exported so the server's router, the OpenAPI spec and the parity test all
+ * read the same list. It used to be a regex literal in the router with no
+ * shared source, which is how `network.json` and `gateways.json` ended up
+ * served but absent from both the spec and the parity test's SERVED list —
+ * invisible to a check that only ever compares those two lists to each other.
+ */
+export const OBSERVER_DOCUMENTS = [
+  'index',
+  'network',
+  'gateways',
+  'observers',
+  'findings',
+] as const;
+
+export type ObserverDocumentName = (typeof OBSERVER_DOCUMENTS)[number];
+
 export interface DocumentEntry {
   path: string;
   sha256: string;

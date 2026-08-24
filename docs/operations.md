@@ -1,5 +1,8 @@
 # Operations runbook — observation capture
 
+> Consuming these documents rather than running the pipeline? See
+> [`consuming-the-api.md`](./consuming-the-api.md).
+
 The one thing this runbook exists to protect: **`close_observation` is
 permissionless**. Observation accounts are swept off the chain within days of
 an epoch closing, and there is no archive to backfill from. An hour of downtime
@@ -56,7 +59,67 @@ TimeoutStopSec=60
 WantedBy=multi-user.target
 ```
 
-Cron for the other two cadences:
+### The other two cadences are NOT optional, and are easy to forget
+
+Capture is the only process that cannot be recomputed, so it gets all the
+attention — but **scheduling only capture leaves the published documents
+frozen**. The database keeps growing and none of it reaches a consumer. On the
+first real deployment this went unnoticed until `/healthz` was read carefully:
+`analysis.lastRunAt` was **11 days** stale (`gatewayCount: 18`) while capture
+was running perfectly.
+
+There is a second-order effect too. `observers:findings` degrades without a
+published `gateways.json`, which only `analyze` produces — it logs
+`infrastructure detectors run degraded`. Scheduling the analysis took this
+deployment from **47 findings to 201** over the same 13 epochs, because the
+infrastructure detectors could finally run.
+
+`deploy/` ships timers for both:
+
+```bash
+sudo install -m 644 deploy/arns-observer-findings.{service,timer} /etc/systemd/system/
+sudo install -m 644 deploy/arns-network-analyze.{service,timer}   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now arns-observer-findings.timer arns-network-analyze.timer
+systemctl list-timers 'arns-*'      # confirm both are scheduled
+```
+
+`reports/` is gitignored and absent from a fresh clone — the same trap as
+`logs/`. `analyze` writes there with `writeFileSync` and dies at the first
+report if it does not exist, so create it and make it writable by the service
+account, and list it in `ReadWritePaths` if the unit uses `ProtectSystem=strict`.
+
+On a small box, turn down the **concurrency** — not the stages. The defaults
+(`DNS_CONCURRENCY=50`, `FINGERPRINT_CONCURRENCY=20`) issue hundreds of
+concurrent lookups across ~650 gateways; `DNS_CONCURRENCY=10
+FINGERPRINT_CONCURRENCY=5` keeps it to a trickle at no cost to the result.
+
+**Do not reach for `SKIP_GEO=1` / `ANALYZE_PERFORMANCE=false` to make it
+cheaper.** They are not a fidelity dial, they are an off switch for the
+analysis this job exists to produce, and the report still generates and still
+looks plausible without them — which is what makes it dangerous. Measured on
+the same network, same day:
+
+| | geo + performance off | full |
+|---|---|---|
+| runtime | 14s @ load 0.11 | 131s @ load 0.79 |
+| `totals.highCentralization` | **0** | **230** |
+| `infrastructure.totalDatacenterHosted` | 0 | 203 (64%) |
+| unique ISPs / countries / ASNs | 0 / 0 / 0 | 27 / 10 / 23 |
+| `topProviders`, `countryDistribution` | empty | populated |
+| `versions` | `null` | populated |
+
+Centralization scoring weights geography at 25%, so with the geo stage off the
+scores collapse and every gateway looks uncontroversial. For a once-a-day job,
+131s is nothing — and most of it is waiting on ip-api's rate limit rather than
+burning CPU. The geo stage catches its own per-batch failures and degrades
+rather than aborting, so an ip-api outage costs that section, not the run.
+
+Known gap: `economics` is still `null` in `network.json` — `economicImpact` is
+defined in the publish contract and rendered by the CLI, but nothing in the
+analysis populates it.
+
+The equivalent in cron, if you prefer it:
 
 ```cron
 */10 * * * *  cd /opt/ar-io-network-analyzer && yarn observers:findings >> logs/findings.log 2>&1

@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PORTAL_DOCUMENTS, portalDocumentPath } from '../src/portal/contract.js';
+import { OBSERVER_DOCUMENTS } from '../src/publish/contract.js';
 import { routeToFile } from '../src/server/index.js';
 
 const SPEC = join(import.meta.dirname, '..', 'docs', 'openapi.yaml');
@@ -32,10 +33,14 @@ function specPaths(): string[] {
  * adding a route without describing it fails here.
  */
 const SERVED = [
-  '/api/v1/index.json',
-  '/api/v1/findings.json',
-  '/api/v1/observers.json',
+  // Derived from the contract so the router and the spec cannot drift apart.
+  // network.json and gateways.json were served but listed in NEITHER the spec
+  // nor this array, which a check that only compares the two lists to each
+  // other can never catch.
+  ...OBSERVER_DOCUMENTS.map((name: string) => `/api/v1/${name}.json`),
   '/api/v1/epochs/{epochIndex}.json',
+  '/archive/{date}/{file}',
+  '/',
   '/api/v1/portal/index.json',
   '/api/v1/portal/gateways.json',
   '/api/v1/portal/vaults.json',

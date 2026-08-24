@@ -1,0 +1,44 @@
+[Unit]
+# Recomputes findings from the capture database and republishes the observer
+# documents (/api/v1/{index,observers,findings}.json and epochs/<n>.json).
+#
+# Without this, those documents are frozen at whatever the last manual run
+# produced: the capture daemon keeps recording epochs into SQLite, but nothing
+# turns that into published JSON. The data would be safe and invisible.
+# MAINNET ONLY — deliberately NOT a systemd template.
+#
+# This is a plain unit bound to /etc/ario-portal-api/prod.env, not an
+# `@%i` template like ario-portal-{publish,serve}@. That is the whole point:
+# the centralization and observer analysis is a mainnet exercise. Running it
+# against devnet would burn RPC and DNS on a throwaway network, publish
+# analysis documents into the testnet namespace where nothing consumes them,
+# and make "is the network centralized" ambiguous about which network.
+#
+# If you ever need a devnet variant, add a separate explicitly-named unit.
+# Do NOT convert this one to a template.
+Description=AR.IO observer findings recompute + publish
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ario-portal
+Group=ario-portal
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+EnvironmentFile=/etc/ario-portal-api/prod.env
+Environment=HOME=/var/lib/ario-portal-api/prod
+Environment=PATH=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+
+# Pure DB -> documents. No network, ~0.5s.
+ExecStart=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin/yarn observers:findings
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/observer-findings.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/observer-findings.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# The store's DIRECTORY must be writable even for a reader: WAL needs -shm.
+ReadWritePaths=/var/lib/ario-portal-api/prod /programs/ar-io-network-analyzer/logs

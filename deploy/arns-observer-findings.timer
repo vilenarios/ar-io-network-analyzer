@@ -1,0 +1,15 @@
+[Unit]
+Description=Recompute and publish AR.IO observer findings hourly
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+
+[Timer]
+# Hourly. Epochs turn over every 24h, but capture writes continuously and this
+# costs half a second with no network, so there is no reason to let published
+# documents lag the database by more than an hour.
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

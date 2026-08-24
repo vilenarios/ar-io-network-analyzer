@@ -1,0 +1,86 @@
+[Unit]
+# The daily network analysis: gateway centralization scan -> /api/v1/network.json
+# and /api/v1/gateways.json, plus the CSV/JSON/HTML reports under reports/.
+#
+# It had never been scheduled. /healthz reported analysis 11 days stale
+# (gatewayCount 18, from 2026-08-13) until this unit existed. It also feeds the
+# observer detectors: without a published gateways.json, `observers:findings`
+# logs "infrastructure detectors run degraded" and produces weaker findings.
+# MAINNET ONLY — deliberately NOT a systemd template.
+#
+# This is a plain unit bound to /etc/ario-portal-api/prod.env, not an
+# `@%i` template like ario-portal-{publish,serve}@. That is the whole point:
+# the centralization and observer analysis is a mainnet exercise. Running it
+# against devnet would burn RPC and DNS on a throwaway network, publish
+# analysis documents into the testnet namespace where nothing consumes them,
+# and make "is the network centralized" ambiguous about which network.
+#
+# If you ever need a devnet variant, add a separate explicitly-named unit.
+# Do NOT convert this one to a template.
+Description=AR.IO network centralization analysis (daily)
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+# Bounds the Restart=on-failure retries below: 3 attempts, then give up until
+# the timer fires again tomorrow.
+StartLimitIntervalSec=2h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=ario-portal
+Group=ario-portal
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+EnvironmentFile=/etc/ario-portal-api/prod.env
+Environment=HOME=/var/lib/ario-portal-api/prod
+Environment=PATH=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+
+# Gentle, but NOT reduced-fidelity. Only the concurrency is turned down; every
+# analysis stage stays on.
+#
+# An earlier version also set SKIP_GEO=1 and ANALYZE_PERFORMANCE=false to be
+# kind to the box. That was a bad trade and worth recording: without the geo
+# stage the entire `infrastructure` block is zeros and centralization scoring
+# collapses — `highCentralization` read **0** instead of **230**, and
+# topProviders/countryDistribution/uniqueAsns were all empty. The report still
+# generated and looked plausible, which is the dangerous part. This job exists
+# for actor-concentration analysis; without geo it does not do its job.
+#
+# Full fidelity costs 131s at load 0.79 on 2 vCPU versus 14s at 0.11. For a
+# once-a-day job that is nothing, and most of the extra time is waiting on
+# ip-api rate limits rather than burning CPU.
+#
+# The defaults (DNS_CONCURRENCY=50, FINGERPRINT_CONCURRENCY=20) would fan out
+# hundreds of concurrent lookups over ~650 gateways; these keep it to a trickle.
+Environment=DNS_CONCURRENCY=10
+Environment=FINGERPRINT_CONCURRENCY=5
+
+ExecStart=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin/yarn analyze
+
+# Belt and braces on top of the tuning above.
+CPUQuota=60%
+MemoryMax=1200M
+Nice=19
+IOSchedulingClass=idle
+# Observed 131s at full fidelity; this is headroom for a slow ip-api day, not
+# an expectation. The geo stage catches its own per-batch failures and degrades
+# rather than aborting, so a timeout here means something else is wrong.
+TimeoutStartSec=30min
+
+# A missed day is a permanent gap in a longitudinal record, so a transient
+# failure (DNS blip, ip-api outage, RPC hiccup) retries instead of waiting 24h.
+# Capped by StartLimitBurst in [Unit] so a persistent failure does not loop.
+Restart=on-failure
+RestartSec=10min
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/network-analyze.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/network-analyze.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# reports/ is gitignored and absent from a fresh clone — same trap as logs/.
+# It must exist AND be writable or the run dies at the first writeFileSync.
+ReadWritePaths=/var/lib/ario-portal-api/prod /programs/ar-io-network-analyzer/logs /programs/ar-io-network-analyzer/reports

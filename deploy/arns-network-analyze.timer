@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the AR.IO network centralization analysis daily
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+
+[Timer]
+# 04:10 UTC — after claims-backup (03:30) so the two never contend for this
+# box's two cores, and offset from the hour so it does not land on the
+# observer-findings tick.
+OnCalendar=*-*-* 04:10:00 UTC
+AccuracySec=5min
+# Catch up after downtime: a missed day is a missing data point in a
+# longitudinal record, and the run is cheap.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
