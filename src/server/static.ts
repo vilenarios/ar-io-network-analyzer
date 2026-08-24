@@ -18,6 +18,9 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
+  // The API serves its own OpenAPI contract. Without this it falls through to
+  // application/octet-stream and a browser downloads it instead of showing it.
+  '.yaml': 'application/yaml; charset=utf-8',
 };
 
 export function contentType(path: string): string {

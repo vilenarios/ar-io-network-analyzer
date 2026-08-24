@@ -30,7 +30,7 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { publicDir, writeDocument } from './publish.js';
+import { publicDir, publishOpenApiSpec, writeDocument } from './publish.js';
 import type { DocumentEntry } from './contract.js';
 import {
   PORTAL_SCHEMA_VERSION,
@@ -170,6 +170,11 @@ export function publishPortalDocuments(
   };
 
   writeDocument(portalDocumentPath('index'), manifest, generatedAt);
+
+  // Keep the served contract in step with the running code. Deliberately not
+  // in the manifest: it is documentation, not network state, and a consumer
+  // diffing document digests should not see churn when only the spec changed.
+  publishOpenApiSpec();
 
   return manifest;
 }

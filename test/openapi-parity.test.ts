@@ -39,6 +39,7 @@ const SERVED = [
   // other can never catch.
   ...OBSERVER_DOCUMENTS.map((name: string) => `/api/v1/${name}.json`),
   '/api/v1/epochs/{epochIndex}.json',
+  '/api/v1/openapi.yaml',
   '/archive/{date}/{file}',
   '/',
   '/api/v1/portal/index.json',
