@@ -56,7 +56,43 @@ TimeoutStopSec=60
 WantedBy=multi-user.target
 ```
 
-Cron for the other two cadences:
+### The other two cadences are NOT optional, and are easy to forget
+
+Capture is the only process that cannot be recomputed, so it gets all the
+attention — but **scheduling only capture leaves the published documents
+frozen**. The database keeps growing and none of it reaches a consumer. On the
+first real deployment this went unnoticed until `/healthz` was read carefully:
+`analysis.lastRunAt` was **11 days** stale (`gatewayCount: 18`) while capture
+was running perfectly.
+
+There is a second-order effect too. `observers:findings` degrades without a
+published `gateways.json`, which only `analyze` produces — it logs
+`infrastructure detectors run degraded`. Scheduling the analysis took this
+deployment from **47 findings to 201** over the same 13 epochs, because the
+infrastructure detectors could finally run.
+
+`deploy/` ships timers for both:
+
+```bash
+sudo install -m 644 deploy/arns-observer-findings.{service,timer} /etc/systemd/system/
+sudo install -m 644 deploy/arns-network-analyze.{service,timer}   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now arns-observer-findings.timer arns-network-analyze.timer
+systemctl list-timers 'arns-*'      # confirm both are scheduled
+```
+
+`reports/` is gitignored and absent from a fresh clone — the same trap as
+`logs/`. `analyze` writes there with `writeFileSync` and dies at the first
+report if it does not exist, so create it and make it writable by the service
+account, and list it in `ReadWritePaths` if the unit uses `ProtectSystem=strict`.
+
+On a small box, tune the analysis rather than letting it fan out: the defaults
+(`DNS_CONCURRENCY=50`, `FINGERPRINT_CONCURRENCY=20`, geo and performance probes
+on) issue hundreds of concurrent lookups across ~650 gateways. With
+`DNS_CONCURRENCY=10 FINGERPRINT_CONCURRENCY=5 SKIP_GEO=1
+ANALYZE_PERFORMANCE=false` it completes in ~14s at load 0.11 on 2 vCPU.
+
+The equivalent in cron, if you prefer it:
 
 ```cron
 */10 * * * *  cd /opt/ar-io-network-analyzer && yarn observers:findings >> logs/findings.log 2>&1

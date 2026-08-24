@@ -1,0 +1,51 @@
+[Unit]
+# The daily network analysis: gateway centralization scan -> /api/v1/network.json
+# and /api/v1/gateways.json, plus the CSV/JSON/HTML reports under reports/.
+#
+# It had never been scheduled. /healthz reported analysis 11 days stale
+# (gatewayCount 18, from 2026-08-13) until this unit existed. It also feeds the
+# observer detectors: without a published gateways.json, `observers:findings`
+# logs "infrastructure detectors run degraded" and produces weaker findings.
+Description=AR.IO network centralization analysis (daily)
+Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ario-portal
+Group=ario-portal
+WorkingDirectory=/programs/ar-io-network-analyzer
+
+EnvironmentFile=/etc/ario-portal-api/prod.env
+Environment=HOME=/var/lib/ario-portal-api/prod
+Environment=PATH=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+
+# Tuned for this box: 2 vCPU / 3.7 GB shared with seven services. The defaults
+# (DNS_CONCURRENCY=50, FINGERPRINT_CONCURRENCY=20, geo + performance probes on)
+# fan out hundreds of concurrent lookups across ~650 gateways. With these it
+# completes in ~14s at load 0.11 and nothing else on the box notices.
+Environment=DNS_CONCURRENCY=10
+Environment=FINGERPRINT_CONCURRENCY=5
+Environment=SKIP_GEO=1
+Environment=ANALYZE_PERFORMANCE=false
+
+ExecStart=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin/yarn analyze
+
+# Belt and braces on top of the tuning above.
+CPUQuota=60%
+MemoryMax=1200M
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+
+StandardOutput=append:/programs/ar-io-network-analyzer/logs/network-analyze.log
+StandardError=append:/programs/ar-io-network-analyzer/logs/network-analyze.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# reports/ is gitignored and absent from a fresh clone — same trap as logs/.
+# It must exist AND be writable or the run dies at the first writeFileSync.
+ReadWritePaths=/var/lib/ario-portal-api/prod /programs/ar-io-network-analyzer/logs /programs/ar-io-network-analyzer/reports
