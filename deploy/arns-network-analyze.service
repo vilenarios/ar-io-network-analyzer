@@ -10,6 +10,10 @@ Description=AR.IO network centralization analysis (daily)
 Documentation=file:///programs/ar-io-network-analyzer/docs/operations.md
 After=network-online.target
 Wants=network-online.target
+# Bounds the Restart=on-failure retries below: 3 attempts, then give up until
+# the timer fires again tomorrow.
+StartLimitIntervalSec=2h
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
@@ -21,14 +25,25 @@ EnvironmentFile=/etc/ario-portal-api/prod.env
 Environment=HOME=/var/lib/ario-portal-api/prod
 Environment=PATH=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
 
-# Tuned for this box: 2 vCPU / 3.7 GB shared with seven services. The defaults
-# (DNS_CONCURRENCY=50, FINGERPRINT_CONCURRENCY=20, geo + performance probes on)
-# fan out hundreds of concurrent lookups across ~650 gateways. With these it
-# completes in ~14s at load 0.11 and nothing else on the box notices.
+# Gentle, but NOT reduced-fidelity. Only the concurrency is turned down; every
+# analysis stage stays on.
+#
+# An earlier version also set SKIP_GEO=1 and ANALYZE_PERFORMANCE=false to be
+# kind to the box. That was a bad trade and worth recording: without the geo
+# stage the entire `infrastructure` block is zeros and centralization scoring
+# collapses — `highCentralization` read **0** instead of **230**, and
+# topProviders/countryDistribution/uniqueAsns were all empty. The report still
+# generated and looked plausible, which is the dangerous part. This job exists
+# for actor-concentration analysis; without geo it does not do its job.
+#
+# Full fidelity costs 131s at load 0.79 on 2 vCPU versus 14s at 0.11. For a
+# once-a-day job that is nothing, and most of the extra time is waiting on
+# ip-api rate limits rather than burning CPU.
+#
+# The defaults (DNS_CONCURRENCY=50, FINGERPRINT_CONCURRENCY=20) would fan out
+# hundreds of concurrent lookups over ~650 gateways; these keep it to a trickle.
 Environment=DNS_CONCURRENCY=10
 Environment=FINGERPRINT_CONCURRENCY=5
-Environment=SKIP_GEO=1
-Environment=ANALYZE_PERFORMANCE=false
 
 ExecStart=/usr/local/lib/nodejs/node-v22.20.0-linux-x64/bin/yarn analyze
 
@@ -37,7 +52,16 @@ CPUQuota=60%
 MemoryMax=1200M
 Nice=19
 IOSchedulingClass=idle
+# Observed 131s at full fidelity; this is headroom for a slow ip-api day, not
+# an expectation. The geo stage catches its own per-batch failures and degrades
+# rather than aborting, so a timeout here means something else is wrong.
 TimeoutStartSec=30min
+
+# A missed day is a permanent gap in a longitudinal record, so a transient
+# failure (DNS blip, ip-api outage, RPC hiccup) retries instead of waiting 24h.
+# Capped by StartLimitBurst in [Unit] so a persistent failure does not loop.
+Restart=on-failure
+RestartSec=10min
 
 StandardOutput=append:/programs/ar-io-network-analyzer/logs/network-analyze.log
 StandardError=append:/programs/ar-io-network-analyzer/logs/network-analyze.log

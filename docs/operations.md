@@ -86,11 +86,35 @@ systemctl list-timers 'arns-*'      # confirm both are scheduled
 report if it does not exist, so create it and make it writable by the service
 account, and list it in `ReadWritePaths` if the unit uses `ProtectSystem=strict`.
 
-On a small box, tune the analysis rather than letting it fan out: the defaults
-(`DNS_CONCURRENCY=50`, `FINGERPRINT_CONCURRENCY=20`, geo and performance probes
-on) issue hundreds of concurrent lookups across ~650 gateways. With
-`DNS_CONCURRENCY=10 FINGERPRINT_CONCURRENCY=5 SKIP_GEO=1
-ANALYZE_PERFORMANCE=false` it completes in ~14s at load 0.11 on 2 vCPU.
+On a small box, turn down the **concurrency** — not the stages. The defaults
+(`DNS_CONCURRENCY=50`, `FINGERPRINT_CONCURRENCY=20`) issue hundreds of
+concurrent lookups across ~650 gateways; `DNS_CONCURRENCY=10
+FINGERPRINT_CONCURRENCY=5` keeps it to a trickle at no cost to the result.
+
+**Do not reach for `SKIP_GEO=1` / `ANALYZE_PERFORMANCE=false` to make it
+cheaper.** They are not a fidelity dial, they are an off switch for the
+analysis this job exists to produce, and the report still generates and still
+looks plausible without them — which is what makes it dangerous. Measured on
+the same network, same day:
+
+| | geo + performance off | full |
+|---|---|---|
+| runtime | 14s @ load 0.11 | 131s @ load 0.79 |
+| `totals.highCentralization` | **0** | **230** |
+| `infrastructure.totalDatacenterHosted` | 0 | 203 (64%) |
+| unique ISPs / countries / ASNs | 0 / 0 / 0 | 27 / 10 / 23 |
+| `topProviders`, `countryDistribution` | empty | populated |
+| `versions` | `null` | populated |
+
+Centralization scoring weights geography at 25%, so with the geo stage off the
+scores collapse and every gateway looks uncontroversial. For a once-a-day job,
+131s is nothing — and most of it is waiting on ip-api's rate limit rather than
+burning CPU. The geo stage catches its own per-batch failures and degrades
+rather than aborting, so an ip-api outage costs that section, not the run.
+
+Known gap: `economics` is still `null` in `network.json` — `economicImpact` is
+defined in the publish contract and rendered by the CLI, but nothing in the
+analysis populates it.
 
 The equivalent in cron, if you prefer it:
 
