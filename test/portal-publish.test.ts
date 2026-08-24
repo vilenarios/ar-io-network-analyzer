@@ -30,6 +30,12 @@ function snapshot(overrides: Partial<PortalSnapshot> = {}): PortalSnapshot {
   return {
     network: 'mainnet',
     host: 'example.quiknode.pro',
+    programIds: {
+      core: '73YoECm6NKXpVRoe5f1Q9BcP5DJGPFUjnFy6AxBE5Nvh',
+      gar: '89fNiiwgpFSPHKuqfNUkgYTYjtAJAhyqHjXmgXeppGpf',
+      arns: '2yCUx5edFvUrkibYaUa2ZXWyx9kuJkS8CwyzsgHPWdZZ',
+      ant: '2MWexMHfMhGJwMHv9Qm9YAVCqjUFUJwDJAysW4oCUGk5',
+    },
     gateways: [{ gatewayAddress: 'gw-1', operatorStake: 50_000_000_000 }],
     vaults: [{ address: 'wallet-1', vaultId: 1, balance: 10 }],
     balances: [{ address: 'wallet-1', balance: 123 }],
@@ -212,4 +218,26 @@ test('network inference never depends on the token in an endpoint path', () => {
   assert.equal(inferNetwork('https://example.com/rpc'), 'unknown');
   assert.equal(inferNetwork('devnet'), 'devnet', 'PORTAL_NETWORK is passed through the same path');
   assert.equal(inferNetwork('not a url at all'), 'unknown');
+});
+
+test('every document and the manifest name the programs they were derived from', () => {
+  withPublicDir((dir) => {
+    const manifest = publishPortalDocuments(snapshot());
+
+    // `network` alone is not self-describing: program ids are per-cluster and
+    // move on a redeploy, and decoding accounts from the wrong program yields
+    // plausible nonsense rather than an error.
+    assert.deepEqual(manifest.programIds, snapshot().programIds);
+
+    for (const name of PORTAL_DOCUMENTS) {
+      const raw = readFileSync(join(dir, portalDocumentPath(name)), 'utf8');
+      const doc = JSON.parse(raw) as { programIds?: unknown; network?: string };
+      assert.deepEqual(
+        doc.programIds,
+        snapshot().programIds,
+        `${name}.json must carry programIds — documents are fetched and cached independently of the manifest`
+      );
+      assert.equal(doc.network, 'mainnet', `${name}.json must carry its network`);
+    }
+  });
 });

@@ -12,7 +12,7 @@
  */
 
 import { initSolanaArio } from '../data/gateway-fetcher.js';
-import { inferNetwork, type PortalNetwork } from './contract.js';
+import { inferNetwork, type PortalNetwork, type PortalProgramIds } from './contract.js';
 
 /** One call per document; the SDK paginates in memory, so this is one sweep each. */
 const FULL_SCAN = { limit: Number.MAX_SAFE_INTEGER } as const;
@@ -21,6 +21,8 @@ export interface PortalSnapshot {
   network: PortalNetwork;
   /** Host only — never the endpoint, which may carry a token. */
   host: string;
+  /** The programs these accounts were read from. Public constants, not secrets. */
+  programIds: PortalProgramIds;
   gateways: unknown[];
   vaults: unknown[];
   balances: unknown[];
@@ -62,7 +64,7 @@ function items(result: Paged | undefined): unknown[] {
  * 429 to lose.
  */
 export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
-  const { ario, host } = await initSolanaArio();
+  const { ario, host, programIds } = await initSolanaArio();
 
   // An operator can state the network explicitly; otherwise it is inferred
   // from the host, which for most providers encodes it.
@@ -89,6 +91,7 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   return {
     network,
     host,
+    programIds,
     gateways,
     vaults,
     balances,

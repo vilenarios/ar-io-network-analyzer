@@ -30,6 +30,12 @@ function fixture(): PortalSnapshot {
   return {
     network: 'mainnet',
     host: 'example.quiknode.pro',
+    programIds: {
+      core: '73YoECm6NKXpVRoe5f1Q9BcP5DJGPFUjnFy6AxBE5Nvh',
+      gar: '89fNiiwgpFSPHKuqfNUkgYTYjtAJAhyqHjXmgXeppGpf',
+      arns: '2yCUx5edFvUrkibYaUa2ZXWyx9kuJkS8CwyzsgHPWdZZ',
+      ant: '2MWexMHfMhGJwMHv9Qm9YAVCqjUFUJwDJAysW4oCUGk5',
+    },
     gateways: Array.from({ length: 12 }, (_, i) => ({
       gatewayAddress: `gw-${i}`,
       operatorStake: 50_000_000_000 + i,

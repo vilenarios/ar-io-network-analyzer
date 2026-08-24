@@ -13,7 +13,9 @@ import { inferNetwork } from '../portal/contract.js';
  * never returned or logged — callers get the client and, at most, the host.
  */
 export async function initSolanaArio() {
-  const { ARIO, MAINNET_RPC_URL, DEVNET_PROGRAM_IDS } = await import('@ar.io/sdk');
+  const { ARIO, MAINNET_RPC_URL, DEVNET_PROGRAM_IDS, MAINNET_PROGRAM_IDS } = await import(
+    '@ar.io/sdk'
+  );
   const { createSolanaRpc } = await import('@solana/kit');
   const rpcUrl = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL;
   const rpc = createSolanaRpc(rpcUrl);
@@ -36,7 +38,26 @@ export async function initSolanaArio() {
           antProgramId: DEVNET_PROGRAM_IDS.ant,
         };
 
-  return { ario: ARIO.init({ rpc, ...programIds }), rpc, host };
+  // Returned so every published document can name the programs it was
+  // derived from. A document that says only "mainnet" is not self-describing:
+  // program ids are per-cluster, they can move on a redeploy, and a consumer
+  // decoding accounts from the wrong program sees corruption rather than a
+  // configuration mismatch.
+  const resolved = network === 'mainnet' || network === 'unknown'
+    ? MAINNET_PROGRAM_IDS
+    : DEVNET_PROGRAM_IDS;
+
+  return {
+    ario: ARIO.init({ rpc, ...programIds }),
+    rpc,
+    host,
+    programIds: {
+      core: String(resolved.core),
+      gar: String(resolved.gar),
+      arns: String(resolved.arns),
+      ant: String(resolved.ant),
+    },
+  };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
