@@ -23,6 +23,7 @@ import {
   PORTAL_SCHEMA_VERSION,
   inferNetwork,
   portalDocumentPath,
+  resolvePortalNetwork,
 } from '../src/portal/contract.js';
 import type { PortalSnapshot } from '../src/portal/fetch.js';
 
@@ -240,4 +241,104 @@ test('every document and the manifest name the programs they were derived from',
       assert.equal(doc.network, 'mainnet', `${name}.json must carry its network`);
     }
   });
+});
+
+/**
+ * The analyzer and the network portal each decide "which network is this?"
+ * independently, and the portal REJECTS any document whose `network` disagrees
+ * with its own answer. The two therefore have to be kept in step by hand —
+ * this table is the guard.
+ *
+ * `portalNetworkTier` mirrors `networkTierFromRpcUrl` in
+ * ar-io-network-portal/src/utils/portalApi.ts. **If that function changes, change
+ * this one too, in the same PR.** Note its fallback is `'mainnet'`, not
+ * `'unknown'` — which is exactly why the analyzer must never publish `'unknown'`.
+ */
+function portalNetworkTier(rpcUrl: string): string {
+  const probe = (value: string): string => {
+    const lower = value.toLowerCase();
+    if (lower.includes('localhost') || lower.includes('127.0.0.1')) return 'localnet';
+    if (lower.includes('devnet')) return 'devnet';
+    if (lower.includes('testnet')) return 'testnet';
+    return 'mainnet';
+  };
+  try {
+    const url = new URL(rpcUrl);
+    return probe(`${url.hostname}${url.pathname}`);
+  } catch {
+    return probe(rpcUrl);
+  }
+}
+
+const ENDPOINT_SHAPES = [
+  'https://example.solana-mainnet.quiknode.pro/tok/',
+  'https://example.solana-devnet.quiknode.pro/tok/',
+  'https://api.mainnet-beta.solana.com',
+  'https://api.devnet.solana.com',
+  'https://api.testnet.solana.com',
+  'http://localhost:8899',
+  'http://127.0.0.1:8899',
+  // The dangerous shapes: no cluster name anywhere in host or path. An internal
+  // resolver, a vanity domain, or a provider with domain masking enabled.
+  'https://rpc.internal.ar.io/',
+  'https://ario-rpc.example.net/v1/tok',
+  'https://solana.example.com/rpc',
+];
+
+test('the analyzer never publishes a network the portal would reject', () => {
+  const previous = process.env.PORTAL_NETWORK;
+  delete process.env.PORTAL_NETWORK;
+  try {
+    for (const endpoint of ENDPOINT_SHAPES) {
+      const theirs = portalNetworkTier(endpoint);
+
+      let ours: string;
+      try {
+        ours = resolvePortalNetwork(endpoint);
+      } catch {
+        // Refusing to publish is always a safe answer: no document is written,
+        // the cycle fails loudly, and the freshness alert fires. What must never
+        // happen is publishing a value the portal will silently discard.
+        continue;
+      }
+
+      assert.equal(
+        ours,
+        theirs,
+        `${endpoint}: analyzer publishes "${ours}", portal expects "${theirs}" — ` +
+          `every snapshot from this endpoint would be silently refused`
+      );
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PORTAL_NETWORK;
+    else process.env.PORTAL_NETWORK = previous;
+  }
+});
+
+test('an endpoint that hides its cluster is refused, not guessed', () => {
+  const previous = process.env.PORTAL_NETWORK;
+  delete process.env.PORTAL_NETWORK;
+  try {
+    // This is the case the whole guard exists for: the analyzer used to answer
+    // 'unknown' and the portal 'mainnet', so every document was discarded while
+    // both sides reported success.
+    assert.throws(
+      () => resolvePortalNetwork('https://rpc.internal.ar.io/'),
+      /PORTAL_NETWORK is not set/,
+      'an unresolvable cluster must fail loudly rather than publish "unknown"'
+    );
+
+    // ...and setting it explicitly is the documented way out.
+    process.env.PORTAL_NETWORK = 'mainnet';
+    assert.equal(resolvePortalNetwork('https://rpc.internal.ar.io/'), 'mainnet');
+
+    process.env.PORTAL_NETWORK = 'not-a-network';
+    assert.throws(
+      () => resolvePortalNetwork('https://rpc.internal.ar.io/'),
+      /is not a network this publisher recognises/
+    );
+  } finally {
+    if (previous === undefined) delete process.env.PORTAL_NETWORK;
+    else process.env.PORTAL_NETWORK = previous;
+  }
 });

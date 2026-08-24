@@ -9,9 +9,9 @@
  * Design rules, each of which cost something to learn:
  *
  * 1. **Documents carry the SDK's decoded shape verbatim, not a projection.**
- *    All five together are ~258 KB gzipped, so trimming buys little and costs
- *    a contract that silently breaks whenever the portal renders a field the
- *    projection dropped.
+ *    All eight together are ~494 KB gzipped (mainnet, 2026-08-24), so trimming
+ *    buys little and costs a contract that silently breaks whenever the portal
+ *    renders a field the projection dropped.
  * 2. **A snapshot is never authoritative.** Every document is re-derivable
  *    from chain at any time, unlike the observation capture in this repo,
  *    which is irreplaceable. Nothing here is a durable record and no database
@@ -160,6 +160,51 @@ export function inferNetwork(rpcUrl: string): PortalNetwork {
   } catch {
     return probe(rpcUrl);
   }
+}
+
+/**
+ * Decide which cluster this publisher is serving, refusing to guess.
+ *
+ * `inferNetwork` returns `'unknown'` for any endpoint whose host does not
+ * literally contain a cluster name — an internal resolver, a vanity domain, or
+ * a provider with domain masking enabled. Publishing `network: "unknown"` is
+ * far worse than failing: the portal compares the field against its own
+ * inference, which falls back to **`'mainnet'`**, so every document would be
+ * silently refused. The publisher would keep succeeding, `/healthz` would stay
+ * green, the freshness alert would never fire, and the service would degrade
+ * into an expensive no-op that consumers ignore — with no signal anywhere.
+ *
+ * So an unresolvable cluster is a hard startup failure with an actionable
+ * message, which the freshness alerting *does* surface.
+ *
+ * @throws when `PORTAL_NETWORK` is set to something unrecognised, or is unset
+ *   and the endpoint does not identify its cluster.
+ */
+export function resolvePortalNetwork(fallbackSource: string): PortalNetwork {
+  const explicit = (process.env.PORTAL_NETWORK ?? '').trim();
+
+  if (explicit) {
+    const named = inferNetwork(explicit);
+    if (named === 'unknown') {
+      throw new Error(
+        `PORTAL_NETWORK="${explicit}" is not a network this publisher recognises. ` +
+          `Expected one of: mainnet, devnet, testnet, localnet.`
+      );
+    }
+    return named;
+  }
+
+  const inferred = inferNetwork(fallbackSource);
+  if (inferred === 'unknown') {
+    throw new Error(
+      'Cannot tell which Solana cluster this endpoint serves, and PORTAL_NETWORK is not set. ' +
+        'Publishing network:"unknown" would be silently rejected by every consumer that checks ' +
+        'the field — the network portal compares it against its own inference, which falls back ' +
+        'to "mainnet" — so the snapshot would be refused while this publisher kept reporting ' +
+        'success. Set PORTAL_NETWORK explicitly in the instance env file.'
+    );
+  }
+  return inferred;
 }
 
 /** `api/v1/portal/<name>.json` — the path a document is published at. */

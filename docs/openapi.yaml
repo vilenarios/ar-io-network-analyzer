@@ -450,7 +450,7 @@ components:
       type: string
       enum: [mainnet, devnet, testnet, localnet, unknown]
       description: |
-        Inferred from the RPC endpoint, or set explicitly with `PORTAL_NETWORK`.
+        Set by the publisher's required `PORTAL_NETWORK`, or inferred from the RPC endpoint when its host names the cluster. Never `unknown` — the publisher refuses to start rather than publish a network no consumer can match.
         The endpoint itself is never exposed — it may carry a provider token.
 
     PortalFreshness:
