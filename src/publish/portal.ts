@@ -54,6 +54,8 @@ function summary(snapshot: PortalSnapshot, generatedAt: string): PortalSummaryDo
       vaults: snapshot.vaults.length,
       balances: snapshot.balances.length,
       delegates: snapshot.delegates.length,
+      withdrawals: snapshot.withdrawals.length,
+      primaryNames: snapshot.primaryNames.length,
       arnsRecords: snapshot.arnsRecordCount,
     },
     tokenSupply: snapshot.tokenSupply,
@@ -79,8 +81,8 @@ export function readPortalManifest(): PortalManifest | null {
  * Write all five documents plus the manifest.
  *
  * `generatedAt` is taken once and stamped on every document so a consumer can
- * tell the set is internally consistent — five documents each carrying their
- * own write time would be indistinguishable from a torn publish.
+ * tell the set is internally consistent — documents each carrying their own
+ * write time would be indistinguishable from a torn publish.
  */
 export function publishPortalDocuments(
   snapshot: PortalSnapshot,
@@ -107,6 +109,21 @@ export function publishPortalDocuments(
     delegates: writeDocument(
       portalDocumentPath('delegates'),
       collection(snapshot.delegates, generatedAt, snapshot.network),
+      generatedAt
+    ),
+    withdrawals: writeDocument(
+      portalDocumentPath('withdrawals'),
+      collection(snapshot.withdrawals, generatedAt, snapshot.network),
+      generatedAt
+    ),
+    primaryNames: writeDocument(
+      portalDocumentPath('primaryNames'),
+      collection(snapshot.primaryNames, generatedAt, snapshot.network),
+      generatedAt
+    ),
+    arnsRecords: writeDocument(
+      portalDocumentPath('arnsRecords'),
+      collection(snapshot.arnsRecords, generatedAt, snapshot.network),
       generatedAt
     ),
     summary: writeDocument(

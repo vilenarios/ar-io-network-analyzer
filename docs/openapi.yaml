@@ -287,6 +287,88 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '503': { $ref: '#/components/responses/NotPublished' }
 
+  /api/v1/portal/withdrawals.json:
+    get:
+      operationId: getPortalWithdrawals
+      tags: [Portal]
+      summary: Every gateway withdrawal (unlocking vault)
+      description: |
+        One entry per `Withdrawal` account in the GAR program: `cursorId`,
+        `vaultId`, `balance`, `startTimestamp`, `endTimestamp` and
+        `gatewayAddress`.
+
+        Filter by `gatewayAddress` for one gateway's unlocking vaults, which
+        is what the portal's per-gateway view needs.
+
+        This does NOT answer `getWithdrawals(address)`. Both public SDK
+        projections drop the withdrawal's `owner`, so a per-wallet lookup
+        still needs its own call — a memcmp-filtered read, not a whole-program
+        scan, so it is not what this service exists to displace.
+      responses:
+        '200':
+          description: Withdrawal collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/primaryNames.json:
+    get:
+      operationId: getPortalPrimaryNames
+      tags: [Portal]
+      summary: Every primary name
+      description: |
+        One entry per primary-name assignment. Filter by address to resolve a
+        single wallet's primary name.
+
+        Worth publishing out of proportion to its size: the SDK's
+        `getPrimaryName(address)` is an **unfiltered** whole-program scan that
+        deserializes every primary-name account and filters client-side, so
+        each visitor resolving one name scans the whole set.
+      responses:
+        '200':
+          description: Primary name collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/portal/arnsRecords.json:
+    get:
+      operationId: getPortalArnsRecords
+      tags: [Portal]
+      summary: Every ArNS record
+      description: |
+        The full ArNS registry, SDK shape verbatim. The largest document by
+        some margin (~160 KB gzipped against ~280 KB for everything else
+        combined), so fetch it only if you list or search names.
+
+        **If you only want the count, read `summary.json`'s
+        `counts.arnsRecords` instead.** Note that asking the SDK for
+        `getArNSRecords({ limit: 1 })` does not save anything: it scans the
+        whole program and deserializes every record before truncating in
+        memory. Publishing this document therefore costs no additional RPC —
+        the publisher already did the scan.
+      responses:
+        '200':
+          description: ArNS record collection.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PortalCollection' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /api/v1/portal/summary.json:
     get:
       operationId: getPortalSummary

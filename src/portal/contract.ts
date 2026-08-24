@@ -27,7 +27,10 @@
 
 import type { DocumentEntry } from '../publish/contract.js';
 
-export const PORTAL_SCHEMA_VERSION = '1.0';
+// 1.1 adds `withdrawals`, `primaryNames` and `arnsRecords`. Additive only:
+// every 1.0 document keeps its path and shape, and consumers discover
+// documents from the manifest, so a 1.0 reader is unaffected.
+export const PORTAL_SCHEMA_VERSION = '1.1';
 
 /** Every portal document lives under this prefix. */
 export const PORTAL_PREFIX = 'api/v1/portal';
@@ -38,6 +41,9 @@ export const PORTAL_DOCUMENTS = [
   'vaults',
   'balances',
   'delegates',
+  'withdrawals',
+  'primaryNames',
+  'arnsRecords',
   'summary',
 ] as const;
 
@@ -84,9 +90,10 @@ export interface PortalCollectionDocument<T> {
  * Scalars the portal would otherwise fetch one RPC call at a time on every
  * page load. Small enough that it costs nothing to publish together.
  *
- * `arnsRecordCount` is a count only. The portal reads `totalItems` from a
- * `getArNSRecords({ limit: 1 })` call, so publishing all ~3,000 records would
- * add ~160 KB for a number.
+ * `counts.arnsRecords` stays here even though `arnsRecords.json` now exists:
+ * the portal's `useArNSStats` wants only `totalItems`, and reading a number
+ * out of a 1 KB summary beats pulling a 160 KB document to call `.length` on
+ * it. The full records are published for consumers that list or search names.
  */
 export interface PortalSummaryDocument {
   schemaVersion: string;
@@ -97,6 +104,8 @@ export interface PortalSummaryDocument {
     vaults: number;
     balances: number;
     delegates: number;
+    withdrawals: number;
+    primaryNames: number;
     arnsRecords: number;
   };
   tokenSupply: unknown;

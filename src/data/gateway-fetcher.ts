@@ -4,6 +4,7 @@
 
 import type { Gateway, AnalyzerConfig } from '../types.js';
 import { safeHost, scrubSecrets } from '../utils/runtime.js';
+import { inferNetwork } from '../portal/contract.js';
 
 /**
  * Build the SDK client.
@@ -12,11 +13,30 @@ import { safeHost, scrubSecrets } from '../utils/runtime.js';
  * never returned or logged — callers get the client and, at most, the host.
  */
 export async function initSolanaArio() {
-  const { ARIO, MAINNET_RPC_URL } = await import('@ar.io/sdk');
+  const { ARIO, MAINNET_RPC_URL, DEVNET_PROGRAM_IDS } = await import('@ar.io/sdk');
   const { createSolanaRpc } = await import('@solana/kit');
   const rpcUrl = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL;
   const rpc = createSolanaRpc(rpcUrl);
-  return { ario: ARIO.init({ rpc }), rpc, host: safeHost(rpcUrl) };
+  const host = safeHost(rpcUrl);
+
+  // Program ids are per-cluster. The SDK's defaults are mainnet's; every other
+  // cluster deploys at addresses derived from its own keypair files, so
+  // `ARIOConfig` documents the overrides as REQUIRED off mainnet. Without them
+  // a devnet endpoint is scanned for mainnet PDAs and the first call fails
+  // with `ArioConfig not found`, which reads like a dead endpoint rather than
+  // a missing override.
+  const network = inferNetwork(process.env.PORTAL_NETWORK || rpcUrl);
+  const programIds =
+    network === 'mainnet' || network === 'unknown'
+      ? {}
+      : {
+          coreProgramId: DEVNET_PROGRAM_IDS.core,
+          garProgramId: DEVNET_PROGRAM_IDS.gar,
+          arnsProgramId: DEVNET_PROGRAM_IDS.arns,
+          antProgramId: DEVNET_PROGRAM_IDS.ant,
+        };
+
+  return { ario: ARIO.init({ rpc, ...programIds }), rpc, host };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

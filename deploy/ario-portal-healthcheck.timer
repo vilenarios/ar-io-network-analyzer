@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the AR.IO portal snapshot API health check every 5 minutes
+Documentation=file:///programs/ar-io-network-analyzer/docs/portal-api.md
+
+[Timer]
+# Publish cadence is 10 min and PORTAL_MAX_AGE_SECONDS is 1500 (2.5 cycles),
+# so a 5-minute check notices a stale snapshot within one interval of it
+# crossing the threshold without adding meaningful load.
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

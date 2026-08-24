@@ -1,0 +1,14 @@
+[Unit]
+Description=AR.IO portal snapshot API health check (alerting)
+Documentation=file:///programs/ar-io-network-analyzer/docs/portal-api.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ario-portal-healthcheck
+# A failing check is the alert, not a unit failure to be retried.
+SuccessExitStatus=0 1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ario-portal-api
