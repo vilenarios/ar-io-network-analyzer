@@ -259,6 +259,197 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE epochs ADD COLUMN created_at INTEGER`,
       `ALTER TABLE epochs ADD COLUMN create_lag_seconds INTEGER`,
     ],
+  },
+  {
+    version: 5,
+    name: 'economics-samples',
+    statements: [
+      // One row per COMPLETED epoch, capturing the protocol balance so a delta
+      // can be taken across it.
+      //
+      // The balance is recomputed on every publish cycle and immediately
+      // discarded, so only one sample has ever existed at a time and no delta
+      // was derivable. Nothing new is measured here — the missing capability
+      // was retention.
+      //
+      // `epoch_index` is the primary key, so a sample is written once and never
+      // revised. Re-running the sampler is a no-op, which is what makes this an
+      // append-only series rather than "whatever the last run happened to see".
+      //
+      // Deliberately absent: any derived column. Net inflow is
+      // `delta(protocol_balance) + total_eligible_rewards`, and storing it would
+      // bake in an attribution the balance does not support — it moves for
+      // reasons beyond ArNS revenue. Components are stored; consumers subtract.
+      `CREATE TABLE IF NOT EXISTS economics_samples (
+         epoch_index            INTEGER PRIMARY KEY,
+         sampled_at             INTEGER NOT NULL,
+         slot                   INTEGER,
+         protocol_balance       INTEGER NOT NULL,
+         total_eligible_rewards INTEGER,
+         demand_factor          REAL,
+         circulating            INTEGER,
+         staked                 INTEGER,
+         delegated              INTEGER,
+         arns_record_count      INTEGER,
+         -- Off-chain price, kept as its own nullable component with provenance.
+         -- Everything else in this row is read from chain; this is not, and a
+         -- consumer deserves to know which is which. Publishing a USD-denominated
+         -- FIELD would hide that seam, so the price is published and the
+         -- multiplication is left to the caller.
+         --
+         -- Nullable independently of the row: a third-party outage must never
+         -- cost us the on-chain sample, which is the part that cannot be
+         -- re-read later.
+         ario_price_usd         REAL,
+         ario_price_source      TEXT,
+         ario_price_at          INTEGER
+       )`,
+    ],
+  },
+  {
+    version: 6,
+    name: 'ario-daily-price',
+    statements: [
+      // Daily ARIO close price, keyed by UTC date.
+      //
+      // Separate from `economics_samples` because it is a different KIND of
+      // fact: off-chain, third-party, and reusable beyond the economics series
+      // (denominating historical ArNS registrations needs the same table).
+      //
+      // `close_date` is the day the price CLOSED, which is not the same as the
+      // day CoinGecko's `/history?date=D` reports it under: that endpoint
+      // returns the 00:00 snapshot of D, which is the close of D-1. Storing
+      // the close date rather than the query date keeps the ambiguity out of
+      // every consumer. An epoch ending on date D at 00:04 UTC therefore takes
+      // the row for D-1.
+      //
+      // Verified against the live API on two dates before any data was loaded:
+      // the alignment is real, and a one-row error is worth up to 23% on a
+      // single day of this series.
+      `CREATE TABLE IF NOT EXISTS ario_price_daily (
+         close_date TEXT PRIMARY KEY,
+         price_usd  REAL NOT NULL,
+         source     TEXT NOT NULL,
+         loaded_at  INTEGER NOT NULL
+       )`,
+    ],
+  },
+  {
+    version: 7,
+    name: 'stake-samples',
+    statements: [
+      // One row per staking POSITION per settled epoch.
+      //
+      // WHY THIS TABLE HAS TO EXIST. Rewards compound directly into stake —
+      // 98.4% of delegations carry sub-ARIO precision and the large ones sit
+      // just above round numbers (2,000,000 staked, 2,016,682.247752 held).
+      // Nothing on chain records what a position has EARNED; only what it
+      // currently holds. So earnings are a difference between two observations,
+      // and without retention there is only ever one observation.
+      //
+      // AND WHY IT CANNOT WAIT. `DistributeEpoch` moves rewards into a
+      // program-owned custody account and credits positions in PDA state, which
+      // has no per-transaction history. Unlike the protocol balance — recovered
+      // from `postTokenBalances` — a stake at a past epoch is NOT recoverable
+      // afterwards. Every epoch that passes unsampled is permanently lost.
+      //
+      // `kind` distinguishes an operator's own stake from a delegation.
+      // Operators were the obvious omission the first time this was scoped:
+      // they hold 8.7M ARIO against delegates' 10.0M.
+      //
+      // The key is (epoch, kind, address, gateway) because one wallet may
+      // delegate to many gateways, and each delegation earns separately.
+      `CREATE TABLE IF NOT EXISTS stake_samples (
+         epoch_index     INTEGER NOT NULL,
+         kind            TEXT    NOT NULL,
+         address         TEXT    NOT NULL,
+         gateway_address TEXT    NOT NULL,
+         staked          INTEGER NOT NULL,
+         vaulted         INTEGER NOT NULL,
+         start_timestamp INTEGER,
+         sampled_at      INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, kind, address, gateway_address)
+       )`,
+      // Reading one position's history across epochs is the query the portal
+      // makes for "what have I earned"; without this it is a full scan.
+      `CREATE INDEX IF NOT EXISTS idx_stake_samples_position
+         ON stake_samples (kind, address, gateway_address, epoch_index)`,
+    ],
+  },
+  {
+    version: 8,
+    name: 'delegate-rewards',
+    statements: [
+      // Exact per-delegation rewards, decoded from CompoundDelegationRewards
+      // events rather than inferred from stake movement.
+      //
+      // Separate from `stake_samples` because it is a different kind of fact
+      // with different guarantees: a sample is an observation that can never be
+      // recovered if missed, whereas these events live in transaction logs and
+      // can be re-derived from chain history at any time. Conflating them would
+      // hide that a row here is replayable and a row there is not.
+      //
+      // `amount` is what the program actually credited, so no deposit or
+      // withdrawal can be mistaken for earnings — the failure mode of deriving
+      // rewards from a stake delta.
+      `CREATE TABLE IF NOT EXISTS delegate_rewards (
+         epoch_index INTEGER NOT NULL,
+         delegate    TEXT    NOT NULL,
+         gateway     TEXT    NOT NULL,
+         amount      INTEGER NOT NULL,
+         event_count INTEGER NOT NULL,
+         first_at    INTEGER NOT NULL,
+         last_at     INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, delegate, gateway)
+       )`,
+      // "What have I earned" is a per-delegate scan across epochs.
+      `CREATE INDEX IF NOT EXISTS idx_delegate_rewards_delegate
+         ON delegate_rewards (delegate, epoch_index)`,
+      // Records which epochs have been scanned, so an epoch with genuinely zero
+      // rewards is distinguishable from one never looked at. Without this an
+      // unscanned epoch reads as "earned nothing".
+      `CREATE TABLE IF NOT EXISTS delegate_reward_scans (
+         epoch_index  INTEGER PRIMARY KEY,
+         scanned_at   INTEGER NOT NULL,
+         events       INTEGER NOT NULL,
+         transactions INTEGER NOT NULL
+       )`,
+    ],
+  },
+  {
+    version: 9,
+    name: 'stake-change-flags',
+    statements: [
+      // Epochs in which a position's stake moved for a reason that is NOT a
+      // reward — the operator staked, withdrew, or claimed a withdrawal.
+      //
+      // WHY FLAGS AND NOT AMOUNTS. An operator's earnings are inferred from the
+      // change in their stake across an epoch, which only equals their reward
+      // if nothing else moved. Rather than parse each instruction's amount and
+      // risk a wrong subtraction, this records THAT the position was disturbed
+      // and the derivation returns null for that epoch. A gap a consumer can
+      // see beats a number nobody can check.
+      //
+      // Cheap in practice: ~7.7 DecreaseOperatorStake per day across 645
+      // gateways, so roughly 1.2% of operator positions are flagged in any
+      // epoch and the rest get a clean figure.
+      //
+      // Attribution is by instruction name AND self-signature: these
+      // instructions are signed by the operator themselves, so the gateway is
+      // flagged only when it appears in the accounts and its operator IS the
+      // signer. Matching on account presence alone is what produced an earlier
+      // invalid attribution — the epoch distributor's own gateway appeared in
+      // every payout it cranked.
+      `CREATE TABLE IF NOT EXISTS stake_change_flags (
+         epoch_index     INTEGER NOT NULL,
+         kind            TEXT    NOT NULL,
+         address         TEXT    NOT NULL,
+         gateway_address TEXT    NOT NULL,
+         instruction     TEXT    NOT NULL,
+         occurrences     INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, kind, address, gateway_address, instruction)
+       )`,
+    ],
   }
 
 ];

@@ -110,6 +110,153 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '404': { $ref: '#/components/responses/NotFoundJson' }
 
+  /api/v1/economics.json:
+    get:
+      operationId: getEconomicsSeries
+      tags: [Analysis]
+      summary: Protocol economics time series
+      description: |
+        One row per completed epoch, oldest first, append-only. Amounts in
+        **mARIO**; `demandFactor` unscaled, as in `portal/summary.json`.
+
+        Exists because `protocolBalance` was recomputed every publish cycle and
+        immediately discarded — only one sample ever existed, so no delta could
+        be taken and protocol revenue was not derivable at any point in time.
+        Nothing new is measured here; the missing capability was retention.
+
+        The identity this enables:
+
+        ```
+        netInflow(t) = protocolBalance(t) − protocolBalance(t−1)
+                       + totalEligibleRewards(t)
+        ```
+
+        **Components, not conclusions.** There is deliberately no `revenue`
+        field: the protocol balance also moves for reasons that are not ArNS
+        revenue, so a figure derived from these components should be labelled
+        *net protocol inflow* until inflows can be attributed by source. Do the
+        subtraction client-side.
+
+        Epoch 510 is the worked example. It shows +60,100,376.84 ARIO of
+        inflow, of which exactly 60,000,000 was a deliberate treasury deposit —
+        two transfers from one authority on 2026-08-11. On chain that is
+        indistinguishable from demand, and at roughly $66k it is 97% of the
+        USD total for the epochs published so far. Exclude or annotate it in
+        anything a human will read as earnings.
+
+        **The earliest row has no predecessor**, so any delta derived from it is
+        undefined — render it as null, never zero.
+
+        **Gaps are real and must be rendered as gaps.** A row is written only
+        when the protocol balance could actually be read shortly after that
+        epoch distributed. If it could not, the epoch is omitted permanently
+        rather than carried forward, interpolated or zero-filled — a fabricated
+        point silently corrupts every delta that spans it. Never assume
+        `series[i+1].epochIndex === series[i].epochIndex + 1`.
+
+        **Every row is anchored to its epoch boundary**, not to when the
+        publisher happened to sample. `endTimestamp` is that boundary and `slot`
+        is the exact slot the balance was read at, so consecutive rows are
+        always one epoch apart and their difference means what it looks like.
+        (Anchoring matters: the very first row written was sampled 15.4 hours
+        late and absorbed 35,725 ARIO of the following epoch before this was
+        corrected.)
+
+        **History can be recovered, and some of this series was.** The balance
+        at any past boundary is recoverable from Solana transaction metadata —
+        `postTokenBalances` on the last transaction that changed the protocol
+        account before that moment — so the operator command
+        `yarn economics:backfill` can extend the series backwards. Recovered
+        rows are measurements, not estimates, and were validated against the
+        live pipeline's independent SDK reading at the same instant (exact
+        match). What is *not* recoverable is the PDA state of that moment, so
+        **recovered rows carry `null` for `demandFactor`, `circulating`,
+        `staked`, `delegated` and `arnsRecordCount`** rather than borrowing
+        today's values. Treat those fields as independently nullable on every
+        row; only `protocolBalance` is guaranteed.
+
+        `arioPriceUsd` is the only off-chain field, is independently nullable,
+        and carries its own provenance (`arioPriceSource`, `arioPriceAt`) — a
+        price outage costs the price, never the on-chain row. `arioPriceSource`
+        distinguishes a spot reading (`coingecko:ar-io-network`) from a daily
+        close (`coingecko:ar-io-network:daily-close`); do not treat the two as
+        interchangeable for intraday work.
+      responses:
+        '200':
+          description: The retained series.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EconomicsSeries' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
+  /api/v1/rewards.json:
+    get:
+      operationId: getRewards
+      tags: [Analysis]
+      summary: What each staking position has earned
+      description: |
+        Per-position earnings, so a holder can be shown "you have earned this
+        much" rather than only "you currently hold this much".
+
+        **Why this is not simply a field on the stake record.** Rewards compound
+        directly into stake, so on-chain state shows what a position HOLDS and
+        never what it EARNED — 98.4% of delegations carry sub-ARIO precision,
+        and the large ones sit just above round numbers. Earnings are a
+        difference, and the difference has to be sourced from somewhere.
+
+        **Two kinds of row, with different guarantees.** `basis` says which:
+
+        - `events` — EXACT. Decoded from the program's own
+          `CompoundDelegationRewards` events, which name the delegate, the
+          gateway and the amount credited. Because events live in transaction
+          logs they are recoverable from history, so this series was backfilled
+          and is replayable.
+        - `inferred` — derived from stake observed either side of an epoch,
+          used for gateway operators because `DistributeEpoch` emits only an
+          epoch summary and no per-operator record. Requires two snapshots, so
+          it begins only once retention has run for two epochs.
+
+        Blending the two under one field would make an inferred figure
+        indistinguishable from a measured one, so they are labelled instead.
+
+        **The per-epoch arrays are a ROLLING WINDOW; lifetime totals are not.**
+        Left unbounded these arrays project to ~12.5 MB after a year of daily
+        epochs, which every consumer would download to read one row. `epochs`
+        therefore carries the most recent 30, `totalEpochsRecorded` says how
+        many exist, and `lifetimeRewards` is computed over the FULL history and
+        never truncated. Show `lifetimeRewards` for "what have I earned";
+        use the arrays for the chart. A position that earned only outside the
+        window keeps its lifetime figure and has an all-null array.
+
+        **`rewards` is aligned index-for-index with the top-level `epochs`.**
+        A `null` entry means that epoch was scanned and this position earned
+        nothing. An epoch absent from `epochs` was never scanned, and must not
+        be rendered as a zero — "scanned and empty" and "not looked at" are
+        different facts.
+
+        **There is deliberately no APY field.** An annual rate from days of
+        history is an extrapolation, and which extrapolation — simple or
+        compounded, time-weighted or not, per position or per wallet — is a
+        presentation decision. The components are here: per-epoch rewards, the
+        stake they were earned on, and each epoch's end time. Compute it
+        explicitly and label it honestly; prefer "realized yield" over "APY"
+        until the history is long enough to annualize without embarrassment.
+      responses:
+        '200':
+          description: Per-position earnings.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RewardsDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /api/v1/network.json:
     get:
       operationId: getNetworkSummary
@@ -143,7 +290,8 @@ paths:
         empty and `totals.highCentralization` collapses to 0 if the analysis
         ran with `SKIP_GEO=1` — geography carries 25% of the centralization
         score. A report with `uniqueAsns: 0` is a degraded run, not a
-        decentralized network. `economics` is currently always `null`.
+        decentralized network. `economics` is an estimate — per-gateway reward
+        times cluster size — not a record of payments.
       responses:
         '200':
           description: Network centralization summary.
@@ -664,11 +812,157 @@ components:
             withdrawals, primaryNames, arnsRecords, summary.
         freshness: { $ref: '#/components/schemas/PortalFreshness' }
 
+    EconomicsSeries:
+      type: object
+      required: [schemaVersion, generatedAt, series]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        series:
+          type: array
+          description: |
+            Oldest first, one row per sampled epoch. May be empty, and may skip
+            epoch indexes — see the endpoint description.
+          items:
+            type: object
+            required: [epochIndex, protocolBalance]
+            properties:
+              epochIndex: { type: integer }
+              endTimestamp:
+                type: [integer, 'null']
+                description: Epoch end, unix **milliseconds**.
+                example: 1787616250000
+              slot:
+                type: [integer, 'null']
+                description: |
+                  Slot the balance was observed at, when known. Null means not
+                  recorded — preferable to a slot read at a different moment
+                  than the balance.
+              protocolBalance:
+                type: integer
+                description: Reward-reserve balance, mARIO. The field the series exists to retain.
+              totalEligibleRewards:
+                type: [integer, 'null']
+                description: The epoch's eligible rewards, mARIO, from the Epoch PDA.
+              demandFactor: { type: [number, 'null'] }
+              circulating: { type: [integer, 'null'] }
+              staked: { type: [integer, 'null'] }
+              delegated: { type: [integer, 'null'] }
+              arnsRecordCount: { type: [integer, 'null'] }
+              arioPriceUsd:
+                type: [number, 'null']
+                description: |
+                  USD price of ARIO for this epoch. **Off-chain**, unlike every
+                  other field, and independently nullable. Multiply client-side;
+                  no USD-denominated field is published, so the seam between
+                  on-chain and third-party data stays visible.
+
+                  Value each epoch at ITS OWN price and sum. Converting a
+                  cumulative ARIO total at today's price is a different and
+                  usually wrong number — ARIO moved -65% across the first 16
+                  epochs of this series, which swings the answer by ~16%.
+                example: 0.00078441
+              arioPriceSource:
+                description: >
+                  Which kind of price `arioPriceUsd` is, and where it came from.
+                  `coingecko:ar-io-network` is a spot reading taken at sample
+                  time; `coingecko:ar-io-network:daily-close` is the close of
+                  the day before the epoch ended, used for rows recovered by
+                  `economics:backfill`. Do not treat the two as interchangeable
+                  for intraday work.
+                type: [string, 'null']
+                example: coingecko:ar-io-network:daily-close
+              arioPriceAt:
+                type: [integer, 'null']
+                description: When the SOURCE observed the price, unix ms — not when we fetched it.
+
+    RewardsDocument:
+      type: object
+      required: [schemaVersion, generatedAt, epochs, positions]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        epochs:
+          type: array
+          items: { type: integer }
+          description: >
+            The most recent scanned epochs, oldest first — a ROLLING WINDOW, not
+            the full history. `positions[].rewards` is aligned to this
+            index-for-index. An epoch not listed is either outside the window
+            (see `lifetimeRewards`) or was never scanned; either way it must not
+            be shown as zero earnings.
+        totalEpochsRecorded:
+          type: integer
+          description: How many epochs exist in total, of which `epochs` is the tail.
+        epochEndTimestamps:
+          type: array
+          items: { type: [integer, 'null'] }
+          description: Epoch end times, unix MILLISECONDS, aligned to `epochs`.
+        counts:
+          type: object
+          properties:
+            delegate: { type: integer }
+            operator: { type: integer }
+        totals:
+          type: object
+          description: >
+            LIFETIME sums in mARIO across all positions, not windowed.
+            `operatorRewards` stays 0 until two stake snapshots exist, because
+            until then nothing supports a non-zero figure.
+          properties:
+            delegateRewards: { type: integer }
+            operatorRewards: { type: integer }
+        positions:
+          type: array
+          description: Highest total earnings first.
+          items:
+            type: object
+            required: [kind, address, gatewayAddress, rewards, totalRewards, basis]
+            properties:
+              kind: { type: string, enum: [delegate, operator] }
+              address:
+                type: string
+                description: The wallet holding the position.
+              gatewayAddress:
+                type: string
+                description: The gateway staked on. Equals `address` for an operator.
+              rewards:
+                type: array
+                items: { type: [integer, 'null'] }
+                description: >
+                  mARIO credited per epoch, aligned to the top-level `epochs`
+                  (a rolling window). `null` means scanned and nothing earned.
+                  For an operator it also means the epoch could not be derived
+                  honestly — the stake moved for a non-reward reason.
+              windowRewards:
+                type: integer
+                description: Sum over the published window only, mARIO.
+              lifetimeRewards:
+                type: integer
+                description: >
+                  Total earned across the whole recorded history, mARIO, never
+                  truncated by the window. THIS is the "what have I earned"
+                  number.
+              epochsRewarded: { type: integer, description: Over the whole history. }
+              currentStake:
+                type: [integer, 'null']
+                description: >
+                  Most recently observed stake, mARIO. Null if the position has
+                  never been sampled. Pair with `rewards` to compute yield.
+              basis:
+                type: string
+                enum: [events, inferred]
+                description: >
+                  `events` is exact, decoded from on-chain reward events.
+                  `inferred` is derived from stake movement. Never present them
+                  as equivalent.
+
     NetworkSummary:
       type: object
       required: [schemaVersion, generatedAt, totals]
       description: |
-        Daily centralization analysis. `economics` is currently always null.
+        Daily centralization analysis. `economics` estimates reward
+        concentration; it is not a record of payments.
       properties:
         schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
         generatedAt:

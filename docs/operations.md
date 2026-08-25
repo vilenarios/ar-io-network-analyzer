@@ -115,15 +115,19 @@ scores collapse and every gateway looks uncontroversial. For a once-a-day job,
 burning CPU. The geo stage catches its own per-batch failures and degrades
 rather than aborting, so an ip-api outage costs that section, not the run.
 
-Known gap: `economics` is still `null` in `network.json` — `economicImpact` is
-defined in the publish contract and rendered by the CLI, but nothing in the
-analysis populates it.
+`economics` in `network.json` is populated (it was `null` until two compounding
+bugs were fixed: a normaliser dropped `totalEligibleGatewayReward`, and the
+guard tested a `.rewards` field the calculation never uses). It is an estimate —
+per-gateway reward times cluster size — not a record of payments.
+
+Not to be confused with `/api/v1/economics.json`, the retained protocol-balance
+time series, which is a different document with a different job.
 
 The equivalent in cron, if you prefer it:
 
 ```cron
-*/10 * * * *  cd /opt/ar-io-network-analyzer && yarn observers:findings >> logs/findings.log 2>&1
-17   4 * * *  cd /opt/ar-io-network-analyzer && yarn analyze          >> logs/analyze.log 2>&1
+*/10 * * * *  cd /programs/ar-io-network-analyzer && yarn observers:findings >> logs/findings.log 2>&1
+17   4 * * *  cd /programs/ar-io-network-analyzer && yarn analyze          >> logs/analyze.log 2>&1
 ```
 
 A single-instance guard (`poll_lock`) makes a second capture daemon refuse to
@@ -261,6 +265,119 @@ yarn analyze              # republish the roster and homepage
 sqlite3 data/observations.sqlite "UPDATE calibration SET active = 0;"
 yarn observers:findings   # back to capped severity / 0.5 confidence
 ```
+
+### 5.6 Extending the economics series backwards
+
+`/api/v1/economics.json` normally grows one row per epoch going forward. Past
+epochs can also be recovered, because the protocol balance at any past moment
+is still on chain: `postTokenBalances` in the metadata of the last transaction
+that changed the protocol token account before that moment.
+
+```bash
+yarn economics:backfill                     # dry run — reports, writes nothing
+yarn economics:backfill --apply
+yarn economics:backfill --apply --reanchor  # also correct drift-anchored rows
+```
+
+It is a manual command and deliberately not on a timer: the hourly job must
+never be able to write history. Safe to re-run — every write is
+`INSERT OR IGNORE` on the epoch, so an interrupted run resumes and a finished
+one is a no-op.
+
+**It refuses to run unless it can prove the account.** The token account is
+hardcoded, so before writing anything it compares that account's current
+balance against the `protocolBalance` the live pipeline independently reports
+in `portal/summary.json`, and aborts on any difference. Without that check a
+wrong address produces a complete, plausible, entirely fictional series rather
+than an error. If `summary.json` is missing or stale, fix that first — the
+refusal is correct.
+
+Three properties worth knowing before you trust the output:
+
+- Recovered rows carry `null` for `demandFactor`, `circulating`, `staked`,
+  `delegated` and `arnsRecordCount`. That PDA state is not in transaction
+  metadata, and today's values are not a substitute for it.
+- An epoch whose balance cannot be recovered is reported by index and left
+  absent. It is never zero-filled or carried forward.
+- Prices come from `data/ario-price-daily.csv`, not a live API. An epoch ending
+  on date D takes the close of **D−1**, because a daily close for D lands at
+  00:00 on D+1. This alignment was verified against CoinGecko's API before the
+  file was loaded; one row of drift is worth up to 23% on a single day.
+
+`--reanchor` is the only operation here that overwrites an existing row. It
+replaces rows whose `sampled_at` is not their epoch boundary — rows written by
+the original sampler, which read the balance whenever the job happened to run.
+That drift is not cosmetic: the first row ever written landed 15.4 hours late
+and so absorbed 35,725 ARIO of the next epoch's activity. Current code anchors
+live samples to the boundary too, so this should only ever be needed once.
+
+Cost is trivial — about 25 RPC calls for a 16-epoch recovery, since signatures
+are fetched once and transaction lookups are cached and shared.
+
+### 5.7 Earnings: one perishable half and one replayable half
+
+Two mechanisms feed `/api/v1/rewards.json`, and they fail differently.
+
+**Delegate rewards are replayable.** `CompoundDelegationRewards` emits an event
+naming the delegate, gateway and amount. Events live in transaction logs, so
+they can be re-derived at any time:
+
+```bash
+yarn rewards:backfill            # dry run — reports the epochs it would scan
+yarn rewards:backfill --apply
+```
+
+Safe to re-run and safe to interrupt: a rescan recomputes identical totals from
+immutable logs, so writes are `INSERT OR REPLACE`. The initial 16-epoch backfill
+read 2,715 transactions in ~3 minutes using 2,718 RPC calls. The live job scans
+at most 2 unscanned epochs per cycle, so steady-state cost is negligible.
+
+An epoch scanned with no events is recorded in `delegate_reward_scans` with
+`events = 0`. That distinction matters: without it, an epoch nobody looked at is
+indistinguishable from one where nobody earned.
+
+**Operator earnings are derived, and null when they cannot be derived
+honestly.** `deriveOperatorRewards` subtracts consecutive stake observations,
+which is only valid if nothing else moved the stake. `stake_change_flags`
+records the epochs where something did — `DecreaseOperatorStake`, `JoinNetwork`
+or `ClaimWithdrawal` — and those epochs yield null with a reason rather than a
+contaminated number. Roughly 1.2% of operator positions are flagged in any
+epoch (~7.7 stake decreases per day across 645 gateways), so the rest get a
+clean figure.
+
+Flags are attributed by instruction name AND self-signature: the gateway is
+flagged only when it appears in the accounts and its registered operator IS the
+transaction signer. Matching on account presence alone is what invalidated an
+earlier attempt to read operator rewards from payout transactions — the account
+that cranks epoch distribution is itself a gateway operator, so its gateway
+appeared in every payout it submitted (30 of 30 sampled). Over-flagging is the
+safe direction: a flagged epoch yields a gap, never a wrong number.
+
+Detection runs inside the reward scan, so it costs **no additional RPC** — the
+same transactions are already being read.
+
+**Operator earnings are NOT replayable, and this is the part that needs
+watching.** `DistributeEpoch` emits only an epoch summary — no per-operator
+record — so an operator's earnings can only come from `stake_samples` taken
+either side of an epoch. Those samples are observations of PDA state, which has
+no transaction history. **A missed epoch is lost permanently.**
+
+So if `arns-observer-findings` stops, delegate rewards can be caught up later
+but operator earnings for those epochs cannot. Treat a stake-sampling gap the
+same way you treat an observation-capture gap. The `🥩 stake:` log line
+confirms it ran; `⏭️  stake: skipped` means the portal snapshot was stale and
+it will retry, which is fine — repeated skips across an epoch boundary are not.
+
+Sampling costs **zero additional RPC**: positions are read from the portal
+snapshot already on disk rather than re-queried.
+
+**Scaling.** `stake_samples` grows ~1,134 rows per epoch, about 414k rows and
+~11 MB a year; `delegate_rewards` about 80k rows a year. Both are trivial for
+SQLite, and the derivation query is served by
+`idx_stake_samples_position`. The published document is the thing that would
+NOT have scaled: unbounded per-epoch arrays project to ~12.5 MB after a year,
+so `rewards.json` publishes a rolling 30-epoch window while `lifetimeRewards`
+stays complete. A findings cycle currently consumes ~1.1s CPU end to end.
 
 ## 6. Backup
 

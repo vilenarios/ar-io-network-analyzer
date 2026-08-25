@@ -31,8 +31,12 @@ Environment=HOME=/var/lib/ario-portal-api/%i
 #   systemctl edit ario-portal-serve@prod
 Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
 
-ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn serve
-
+# Invoked directly, NOT via `yarn <script>`. systemd signals the whole control
+# group, and yarn 1.x exits 1 when it is signalled — so every orderly stop was
+# recorded as status=1/FAILURE even though the daemon itself exited cleanly,
+# which buries real failures in the journal. One less process, and the unit's
+# exit status is now the daemon's own.
+ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/node --env-file-if-exists=.env --import tsx src/server/index.ts
 Restart=always
 RestartSec=5
 KillSignal=SIGTERM

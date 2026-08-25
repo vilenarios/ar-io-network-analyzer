@@ -341,7 +341,11 @@ export function routeToFile(pathname: string): string | null {
     return `archive/${archiveMatch[1]}/${rest}`;
   }
 
-  if (/^\/api\/v1\/(index|network|gateways|observers|findings)\.json$/.test(pathname)) {
+  // Derived from the contract, not restated here: `economics.json` was added to
+  // OBSERVER_DOCUMENTS and a hand-maintained duplicate of this list silently
+  // failed to serve it. One source, so the next document cannot be forgotten.
+  const observerMatch = /^\/api\/v1\/([a-zA-Z]+)\.json$/.exec(pathname);
+  if (observerMatch && (OBSERVER_DOCUMENTS as readonly string[]).includes(observerMatch[1])) {
     return pathname.slice(1);
   }
 

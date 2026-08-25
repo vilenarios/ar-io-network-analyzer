@@ -16,9 +16,25 @@ import {
   activeCalibration,
   getObservationsForEpochs,
   listEpochs,
+  epochEndTimestampSeconds,
+  listEconomicsSamples,
+  listScannedRewardEpochs,
+  listDelegateRewards,
+  latestStakePerPosition,
   listFindings,
   upsertFindings,
 } from '../db/repo-read.js';
+import { buildEconomicsDocument } from '../economics/document.js';
+import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
+import { sampleEconomics } from '../economics/sample.js';
+import { createBalanceReader } from '../economics/solana-balance.js';
+import { readStakePositions } from '../rewards/inputs.js';
+import { sampleStakePositions } from '../rewards/sample.js';
+import { createProgramReader } from '../rewards/program-reader.js';
+import { buildRewardsDocument } from '../rewards/document.js';
+import { deriveOperatorRewards } from '../rewards/operator.js';
+import { epochsAwaitingRewardScan, scanDelegateRewards } from '../rewards/scan.js';
+import { publicDir } from '../publish/publish.js';
 import {
   DETECTOR_VERSION,
   EPOCH_DETECTORS,
@@ -206,9 +222,117 @@ async function main(): Promise<void> {
       return firstSeenAt === undefined ? finding : { ...finding, firstSeenAt };
     });
 
+    // Retain one protocol-balance sample per completed epoch, so a delta can
+    // be taken across it. Guarded: a failure here must never cost the findings
+    // publish, which is the job this process actually exists to do.
+    try {
+      // Anchored to the epoch boundary, not to now — see rule 3 in sample.ts.
+      // Costs a handful of RPC calls once per epoch (roughly once a day), not
+      // per cycle: the reader caches signatures for the life of the process and
+      // is only consulted when an epoch is actually pending.
+      const balanceReader = createBalanceReader();
+      const result = await sampleEconomics(
+        db,
+        async () => readEconomicsInputsFromSummary(publicDir()),
+        {
+          readBoundaryBalance: async (epochIndex) => {
+            const endSeconds = epochEndTimestampSeconds(db, epochIndex);
+            if (endSeconds === null) return null;
+            const boundary = await balanceReader.balanceAtBoundary(endSeconds);
+            return boundary ? { ...boundary, endMs: endSeconds * 1000 } : null;
+          },
+        }
+      );
+      if (result.sampled.length > 0) {
+        console.log(`💰 economics: sampled epoch(s) ${result.sampled.join(', ')}`);
+      }
+      if (result.skipped.length > 0) {
+        console.log(
+          `⏭️  economics: skipped epoch(s) ${result.skipped.join(', ')} — ` +
+            `no usable protocol balance (a gap is published as a gap, never filled in)`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ economics sampling failed: ${scrubSecrets(error)}`);
+    }
+
+    // Retain every staking position once per settled epoch, so a position's
+    // earnings become derivable at all. Guarded like the economics sample: this
+    // must never cost the findings publish.
+    //
+    // Costs ZERO extra RPC — the positions are read from the portal snapshot
+    // already on disk, not re-fetched. Querying the ~805 positions individually
+    // would add real load to obtain numbers we already have.
+    //
+    // Unlike the economics sample this cannot be backfilled: stake credits land
+    // in PDA state, which has no per-transaction history. A missed epoch is
+    // gone, which is why it runs on the cheap cadence.
+    try {
+      const result = await sampleStakePositions(db, async () =>
+        readStakePositions(publicDir())
+      );
+      if (result.sampled.length > 0) {
+        console.log(
+          `🥩 stake: retained ${result.positions} position(s) for epoch(s) ${result.sampled.join(', ')}`
+        );
+      }
+      if (result.skipped.length > 0) {
+        console.log(
+          `⏭️  stake: skipped epoch(s) ${result.skipped.join(', ')} — portal snapshot ` +
+            `missing or stale (retries next cycle; a gap here is unrecoverable)`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ stake sampling failed: ${scrubSecrets(error)}`);
+    }
+
+    // Record exact delegate rewards from the program's own events. Unlike the
+    // stake sample this is replayable — the events are immutable log data — so
+    // a failure here costs nothing permanent and the epoch is simply rescanned.
+    try {
+      const pending = epochsAwaitingRewardScan(db, 2);
+      if (pending.length > 0) {
+        // `operatorOf` enables stake-change detection in the same pass, at no
+        // extra RPC: the transactions are already being read for reward events.
+        // Sourced from the portal snapshot, which is the document that actually
+        // carries the gateway->operator mapping.
+        const snapshot = readStakePositions(publicDir());
+        const operatorByGateway = new Map(
+          (snapshot?.positions ?? [])
+            .filter((position) => position.kind === 'operator')
+            .map((position) => [position.gatewayAddress, position.address])
+        );
+        const result = await scanDelegateRewards(db, {
+          ...createProgramReader(),
+          operatorOf: (gatewayAddress) => operatorByGateway.get(gatewayAddress) ?? null,
+        }, pending);
+        console.log(
+          `🎁 rewards: ${result.events} event(s), ` +
+            `${(result.totalAmount / 1e6).toFixed(6)} ARIO across epoch(s) ${result.epochs.join(', ')}`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ reward scan failed: ${scrubSecrets(error)}`);
+    }
+
     await publishDocuments({
       observers: buildObserversDocument(epochs, publishable, roster.gateways),
       findings: buildFindingsDocument(publishable, epochs, config),
+      economics: buildEconomicsDocument(
+        listEconomicsSamples(db),
+        (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
+        new Date().toISOString()
+      ),
+      rewards: buildRewardsDocument(
+        // Only epochs actually scanned, so an unscanned one can never be read
+        // as an epoch in which a position earned nothing.
+        listScannedRewardEpochs(db),
+        (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
+        listDelegateRewards(db),
+        latestStakePerPosition(db),
+        new Date().toISOString(),
+        deriveOperatorRewards(db)
+      ),
       epochDocs: epochs.map((epoch) => ({
         epochIndex: epoch.epochIndex,
         doc: buildEpochDocument(epoch, publishable),

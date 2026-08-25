@@ -491,3 +491,197 @@ export function activeCalibration(db: Database): CalibrationRow | null {
     notes: (row.notes as string | null) ?? null,
   };
 }
+
+/** One retained protocol-economics sample. Amounts in mARIO. */
+export interface EconomicsSample {
+  epochIndex: number;
+  sampledAt: number;
+  slot: number | null;
+  protocolBalance: number;
+  totalEligibleRewards: number | null;
+  demandFactor: number | null;
+  circulating: number | null;
+  staked: number | null;
+  delegated: number | null;
+  arnsRecordCount: number | null;
+  arioPriceUsd: number | null;
+  arioPriceSource: string | null;
+  arioPriceAt: number | null;
+}
+
+/**
+ * How long after an epoch ENDS we are still willing to attribute the current
+ * protocol balance to it. One epoch (24h), so a sample can never be more than
+ * one epoch of drift away from the boundary it claims to describe.
+ *
+ * This is what makes the series honest rather than merely populated. Without
+ * it, the first run finds every distributed epoch unsampled and writes today's
+ * balance against all of them — producing a run of identical values whose
+ * deltas are all zero, indistinguishable from "the protocol earned nothing for
+ * a week". Observed in testing: 8 epochs, one balance, 7 fake zero deltas.
+ */
+const MAX_SAMPLE_LAG_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Epochs that have distributed, carry no sample yet, and ended recently enough
+ * that the CURRENT balance still describes them.
+ *
+ * `rewards_distributed` is the sample point: after it, the epoch's rewards have
+ * left the protocol balance and the figure is settled. Sampling "whenever the
+ * job ran" would make a row incomparable to its neighbours, because the balance
+ * moves continuously — a delta only means something if every row is taken at
+ * the same moment in the epoch lifecycle.
+ *
+ * Epochs older than the window are never returned, so they are never sampled
+ * and never retried. That is deliberate: their balance is unrecoverable, and a
+ * gap in the series is honest where a late guess would not be. It is also why
+ * the series legitimately starts empty and grows forward one row at a time.
+ *
+ * `end_timestamp` is stored in SECONDS.
+ */
+export function epochsAwaitingEconomicsSample(
+  db: Database,
+  now: number = Date.now(),
+  limit = 4
+): number[] {
+  const earliestEnd = Math.floor((now - MAX_SAMPLE_LAG_MS) / 1000);
+  return db
+    .prepare<
+      [number, number],
+      { epoch_index: number }
+    >(
+      `SELECT e.epoch_index
+         FROM epochs e
+         LEFT JOIN economics_samples s ON s.epoch_index = e.epoch_index
+        WHERE e.rewards_distributed = 1
+          AND s.epoch_index IS NULL
+          AND e.end_timestamp IS NOT NULL
+          AND e.end_timestamp >= ?
+        ORDER BY e.epoch_index ASC
+        LIMIT ?`
+    )
+    .all(earliestEnd, limit)
+    .map((row) => row.epoch_index);
+}
+
+/** The retained series, oldest first. */
+export function listEconomicsSamples(db: Database): EconomicsSample[] {
+  return db
+    .prepare<[], Record<string, number | string | null>>(
+      `SELECT s.epoch_index, s.sampled_at, s.slot, s.protocol_balance,
+              s.total_eligible_rewards, s.demand_factor, s.circulating,
+              s.staked, s.delegated, s.arns_record_count,
+              s.ario_price_usd, s.ario_price_source, s.ario_price_at
+         FROM economics_samples s
+        ORDER BY s.epoch_index ASC`
+    )
+    .all()
+    .map((row) => ({
+      epochIndex: Number(row.epoch_index),
+      sampledAt: Number(row.sampled_at),
+      slot: row.slot === null ? null : Number(row.slot),
+      protocolBalance: Number(row.protocol_balance),
+      totalEligibleRewards:
+        row.total_eligible_rewards === null ? null : Number(row.total_eligible_rewards),
+      demandFactor: row.demand_factor === null ? null : Number(row.demand_factor),
+      circulating: row.circulating === null ? null : Number(row.circulating),
+      staked: row.staked === null ? null : Number(row.staked),
+      delegated: row.delegated === null ? null : Number(row.delegated),
+      arnsRecordCount: row.arns_record_count === null ? null : Number(row.arns_record_count),
+      arioPriceUsd: row.ario_price_usd === null ? null : Number(row.ario_price_usd),
+      arioPriceSource: (row.ario_price_source as unknown as string | null) ?? null,
+      arioPriceAt: row.ario_price_at === null ? null : Number(row.ario_price_at),
+    }));
+}
+
+/** `end_timestamp` is stored in SECONDS; callers publishing ms must convert. */
+export function epochEndTimestampSeconds(db: Database, epochIndex: number): number | null {
+  const row = db
+    .prepare<[number], { end_timestamp: number | null }>(
+      `SELECT end_timestamp FROM epochs WHERE epoch_index = ?`
+    )
+    .get(epochIndex);
+  return row?.end_timestamp === null || row?.end_timestamp === undefined
+    ? null
+    : Number(row.end_timestamp);
+}
+
+/** Per-epoch eligible rewards, as captured from the Epoch PDA. */
+export function epochTotalEligibleRewards(db: Database, epochIndex: number): number | null {
+  const row = db
+    .prepare<[number], { total_eligible_rewards: number | null }>(
+      `SELECT total_eligible_rewards FROM epochs WHERE epoch_index = ?`
+    )
+    .get(epochIndex);
+  const value = row?.total_eligible_rewards;
+  return value === null || value === undefined ? null : Number(value);
+}
+
+/** Epochs actually scanned for delegate reward events, oldest first. */
+export function listScannedRewardEpochs(db: Database): number[] {
+  return db
+    .prepare<[], { epoch_index: number }>(
+      'SELECT epoch_index FROM delegate_reward_scans ORDER BY epoch_index ASC'
+    )
+    .all()
+    .map((row) => row.epoch_index);
+}
+
+export interface DelegateRewardRow {
+  epochIndex: number;
+  delegate: string;
+  gateway: string;
+  amount: number;
+}
+
+/** Every recorded delegate reward, for building the published document. */
+export function listDelegateRewards(db: Database): DelegateRewardRow[] {
+  return db
+    .prepare<[], { epoch_index: number; delegate: string; gateway: string; amount: number }>(
+      `SELECT epoch_index, delegate, gateway, amount
+         FROM delegate_rewards ORDER BY epoch_index ASC`
+    )
+    .all()
+    .map((row) => ({
+      epochIndex: row.epoch_index,
+      delegate: row.delegate,
+      gateway: row.gateway,
+      amount: Number(row.amount),
+    }));
+}
+
+export interface LatestStakeRow {
+  kind: 'delegate' | 'operator';
+  address: string;
+  gatewayAddress: string;
+  staked: number;
+}
+
+/**
+ * The most recent stake observed for each position.
+ *
+ * Grouped by position and taking the highest epoch, so a position that has
+ * since exited keeps its final observation rather than vanishing.
+ */
+export function latestStakePerPosition(db: Database): LatestStakeRow[] {
+  return db
+    .prepare<[], { kind: string; address: string; gateway_address: string; staked: number }>(
+      `SELECT s.kind, s.address, s.gateway_address, s.staked
+         FROM stake_samples s
+         JOIN (
+           SELECT kind, address, gateway_address, MAX(epoch_index) AS epoch_index
+             FROM stake_samples GROUP BY kind, address, gateway_address
+         ) latest
+           ON latest.kind = s.kind
+          AND latest.address = s.address
+          AND latest.gateway_address = s.gateway_address
+          AND latest.epoch_index = s.epoch_index`
+    )
+    .all()
+    .map((row) => ({
+      kind: row.kind as 'delegate' | 'operator',
+      address: row.address,
+      gatewayAddress: row.gateway_address,
+      staked: Number(row.staked),
+    }));
+}
