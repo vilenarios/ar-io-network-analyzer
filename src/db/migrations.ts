@@ -259,6 +259,52 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE epochs ADD COLUMN created_at INTEGER`,
       `ALTER TABLE epochs ADD COLUMN create_lag_seconds INTEGER`,
     ],
+  },
+  {
+    version: 5,
+    name: 'economics-samples',
+    statements: [
+      // One row per COMPLETED epoch, capturing the protocol balance so a delta
+      // can be taken across it.
+      //
+      // The balance is recomputed on every publish cycle and immediately
+      // discarded, so only one sample has ever existed at a time and no delta
+      // was derivable. Nothing new is measured here — the missing capability
+      // was retention.
+      //
+      // `epoch_index` is the primary key, so a sample is written once and never
+      // revised. Re-running the sampler is a no-op, which is what makes this an
+      // append-only series rather than "whatever the last run happened to see".
+      //
+      // Deliberately absent: any derived column. Net inflow is
+      // `delta(protocol_balance) + total_eligible_rewards`, and storing it would
+      // bake in an attribution the balance does not support — it moves for
+      // reasons beyond ArNS revenue. Components are stored; consumers subtract.
+      `CREATE TABLE IF NOT EXISTS economics_samples (
+         epoch_index            INTEGER PRIMARY KEY,
+         sampled_at             INTEGER NOT NULL,
+         slot                   INTEGER,
+         protocol_balance       INTEGER NOT NULL,
+         total_eligible_rewards INTEGER,
+         demand_factor          REAL,
+         circulating            INTEGER,
+         staked                 INTEGER,
+         delegated              INTEGER,
+         arns_record_count      INTEGER,
+         -- Off-chain price, kept as its own nullable component with provenance.
+         -- Everything else in this row is read from chain; this is not, and a
+         -- consumer deserves to know which is which. Publishing a USD-denominated
+         -- FIELD would hide that seam, so the price is published and the
+         -- multiplication is left to the caller.
+         --
+         -- Nullable independently of the row: a third-party outage must never
+         -- cost us the on-chain sample, which is the part that cannot be
+         -- re-read later.
+         ario_price_usd         REAL,
+         ario_price_source      TEXT,
+         ario_price_at          INTEGER
+       )`,
+    ],
   }
 
 ];

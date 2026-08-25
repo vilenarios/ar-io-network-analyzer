@@ -110,6 +110,62 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '404': { $ref: '#/components/responses/NotFoundJson' }
 
+  /api/v1/economics.json:
+    get:
+      operationId: getEconomicsSeries
+      tags: [Analysis]
+      summary: Protocol economics time series
+      description: |
+        One row per completed epoch, oldest first, append-only. Amounts in
+        **mARIO**; `demandFactor` unscaled, as in `portal/summary.json`.
+
+        Exists because `protocolBalance` was recomputed every publish cycle and
+        immediately discarded — only one sample ever existed, so no delta could
+        be taken and protocol revenue was not derivable at any point in time.
+        Nothing new is measured here; the missing capability was retention.
+
+        The identity this enables:
+
+        ```
+        netInflow(t) = protocolBalance(t) − protocolBalance(t−1)
+                       + totalEligibleRewards(t)
+        ```
+
+        **Components, not conclusions.** There is deliberately no `revenue`
+        field: the protocol balance also moves for reasons that are not ArNS
+        revenue, so a figure derived from these components should be labelled
+        *net protocol inflow* until inflows can be attributed by source. Do the
+        subtraction client-side.
+
+        **The earliest row has no predecessor**, so any delta derived from it is
+        undefined — render it as null, never zero.
+
+        **Gaps are real and must be rendered as gaps.** A row is written only
+        when the protocol balance could actually be read shortly after that
+        epoch distributed. If it could not, the epoch is omitted permanently
+        rather than carried forward, interpolated or zero-filled — a fabricated
+        point silently corrupts every delta that spans it. Never assume
+        `series[i+1].epochIndex === series[i].epochIndex + 1`.
+
+        **The series starts empty and grows forward.** Epochs that completed
+        before the first capture never appear, because the balance they had at
+        the time is unrecoverable. An empty `series` is a valid document.
+
+        `arioPriceUsd` is the only off-chain field, is independently nullable,
+        and carries its own provenance (`arioPriceSource`, `arioPriceAt`) — a
+        price outage costs the price, never the on-chain row.
+      responses:
+        '200':
+          description: The retained series.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EconomicsSeries' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '503': { $ref: '#/components/responses/NotPublished' }
+
   /api/v1/network.json:
     get:
       operationId: getNetworkSummary
@@ -663,6 +719,58 @@ components:
             Keyed by document name — gateways, vaults, balances, delegates,
             withdrawals, primaryNames, arnsRecords, summary.
         freshness: { $ref: '#/components/schemas/PortalFreshness' }
+
+    EconomicsSeries:
+      type: object
+      required: [schemaVersion, generatedAt, series]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        series:
+          type: array
+          description: |
+            Oldest first, one row per sampled epoch. May be empty, and may skip
+            epoch indexes — see the endpoint description.
+          items:
+            type: object
+            required: [epochIndex, protocolBalance]
+            properties:
+              epochIndex: { type: integer }
+              endTimestamp:
+                type: [integer, 'null']
+                description: Epoch end, unix **milliseconds**.
+                example: 1787616250000
+              slot:
+                type: [integer, 'null']
+                description: |
+                  Slot the balance was observed at, when known. Null means not
+                  recorded — preferable to a slot read at a different moment
+                  than the balance.
+              protocolBalance:
+                type: integer
+                description: Reward-reserve balance, mARIO. The field the series exists to retain.
+              totalEligibleRewards:
+                type: [integer, 'null']
+                description: The epoch's eligible rewards, mARIO, from the Epoch PDA.
+              demandFactor: { type: [number, 'null'] }
+              circulating: { type: [integer, 'null'] }
+              staked: { type: [integer, 'null'] }
+              delegated: { type: [integer, 'null'] }
+              arnsRecordCount: { type: [integer, 'null'] }
+              arioPriceUsd:
+                type: [number, 'null']
+                description: |
+                  Spot USD price. **Off-chain**, unlike every other field, and
+                  independently nullable. Multiply client-side; no
+                  USD-denominated field is published, so the seam between
+                  on-chain and third-party data stays visible.
+                example: 0.00073145
+              arioPriceSource:
+                type: [string, 'null']
+                example: coingecko:ar-io-network
+              arioPriceAt:
+                type: [integer, 'null']
+                description: When the SOURCE observed the price, unix ms — not when we fetched it.
 
     NetworkSummary:
       type: object

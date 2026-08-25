@@ -50,6 +50,7 @@ export const OBSERVER_DOCUMENTS = [
   'gateways',
   'observers',
   'findings',
+  'economics',
 ] as const;
 
 export type ObserverDocumentName = (typeof OBSERVER_DOCUMENTS)[number];
@@ -69,6 +70,13 @@ export interface Manifest {
     gateways?: DocumentEntry;
     observers?: DocumentEntry;
     findings?: DocumentEntry;
+    /**
+     * Retained protocol-economics series. Listed here so consumers can find it:
+     * the network portal's availability check reads this map and will not
+     * request a document that is absent from it, however well the server
+     * serves it.
+     */
+    economics?: DocumentEntry;
     epochs?: Array<DocumentEntry & { epochIndex: number }>;
   };
   freshness: {

@@ -27,6 +27,7 @@ import {
 import { dirname, join, resolve } from 'path';
 import type { Database } from 'better-sqlite3';
 import { openWriter, tryOpenReader } from '../db/index.js';
+import type { EconomicsDocument } from '../economics/document.js';
 import { consecutiveFailedPollRuns, latestPollRun } from '../db/repo-read.js';
 import {
   SCHEMA_VERSION,
@@ -59,6 +60,12 @@ export interface PublishInput {
   gateways?: GatewaysDocument;
   observers?: ObserversDocument;
   findings?: FindingsDocument;
+  /**
+   * Retained protocol-economics series. Written stably: it changes only when a
+   * new epoch is sampled, so between epochs it keeps its bytes, its mtime and
+   * therefore its ETag.
+   */
+  economics?: EconomicsDocument;
   epochDocs?: Array<{ epochIndex: number; doc: EpochDocument }>;
   homepage?: { html: string; csv: string; summaryJson: string; date: string };
   archiveDate?: string;
@@ -428,6 +435,17 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
     }
     if (input.findings) {
       documents.findings = writeDocument('api/v1/findings.json', input.findings, generatedAt);
+    }
+    if (input.economics) {
+      // Registering it here is what makes it visible AT ALL: the portal's
+      // availability check reads this documents map and refuses to request any
+      // document it does not find listed. An unlisted document is invisible no
+      // matter what the server returns for it.
+      documents.economics = writeDocumentStable(
+        'api/v1/economics.json',
+        input.economics,
+        generatedAt
+      );
     }
     if (input.epochDocs && input.epochDocs.length > 0) {
       const byIndex = new Map<number, DocumentEntry & { epochIndex: number }>(

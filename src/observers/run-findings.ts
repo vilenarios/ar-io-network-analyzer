@@ -16,9 +16,15 @@ import {
   activeCalibration,
   getObservationsForEpochs,
   listEpochs,
+  epochEndTimestampSeconds,
+  listEconomicsSamples,
   listFindings,
   upsertFindings,
 } from '../db/repo-read.js';
+import { buildEconomicsDocument } from '../economics/document.js';
+import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
+import { sampleEconomics } from '../economics/sample.js';
+import { publicDir } from '../publish/publish.js';
 import {
   DETECTOR_VERSION,
   EPOCH_DETECTORS,
@@ -206,9 +212,36 @@ async function main(): Promise<void> {
       return firstSeenAt === undefined ? finding : { ...finding, firstSeenAt };
     });
 
+    // Retain one protocol-balance sample per completed epoch, so a delta can
+    // be taken across it. Guarded: a failure here must never cost the findings
+    // publish, which is the job this process actually exists to do.
+    try {
+      const result = await sampleEconomics(db, async () => {
+        // `observedAt` rides along on the inputs, so the row records when the
+        // balance was true rather than when this job ran.
+        return readEconomicsInputsFromSummary(publicDir());
+      });
+      if (result.sampled.length > 0) {
+        console.log(`💰 economics: sampled epoch(s) ${result.sampled.join(', ')}`);
+      }
+      if (result.skipped.length > 0) {
+        console.log(
+          `⏭️  economics: skipped epoch(s) ${result.skipped.join(', ')} — ` +
+            `no usable protocol balance (a gap is published as a gap, never filled in)`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ economics sampling failed: ${scrubSecrets(error)}`);
+    }
+
     await publishDocuments({
       observers: buildObserversDocument(epochs, publishable, roster.gateways),
       findings: buildFindingsDocument(publishable, epochs, config),
+      economics: buildEconomicsDocument(
+        listEconomicsSamples(db),
+        (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
+        new Date().toISOString()
+      ),
       epochDocs: epochs.map((epoch) => ({
         epochIndex: epoch.epochIndex,
         doc: buildEpochDocument(epoch, publishable),
