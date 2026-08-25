@@ -25,6 +25,8 @@ import { buildEconomicsDocument } from '../economics/document.js';
 import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
 import { sampleEconomics } from '../economics/sample.js';
 import { createBalanceReader } from '../economics/solana-balance.js';
+import { readStakePositions } from '../rewards/inputs.js';
+import { sampleStakePositions } from '../rewards/sample.js';
 import { publicDir } from '../publish/publish.js';
 import {
   DETECTOR_VERSION,
@@ -245,6 +247,36 @@ async function main(): Promise<void> {
       }
     } catch (error) {
       console.error(`❌ economics sampling failed: ${scrubSecrets(error)}`);
+    }
+
+    // Retain every staking position once per settled epoch, so a position's
+    // earnings become derivable at all. Guarded like the economics sample: this
+    // must never cost the findings publish.
+    //
+    // Costs ZERO extra RPC — the positions are read from the portal snapshot
+    // already on disk, not re-fetched. Querying the ~805 positions individually
+    // would add real load to obtain numbers we already have.
+    //
+    // Unlike the economics sample this cannot be backfilled: stake credits land
+    // in PDA state, which has no per-transaction history. A missed epoch is
+    // gone, which is why it runs on the cheap cadence.
+    try {
+      const result = await sampleStakePositions(db, async () =>
+        readStakePositions(publicDir())
+      );
+      if (result.sampled.length > 0) {
+        console.log(
+          `🥩 stake: retained ${result.positions} position(s) for epoch(s) ${result.sampled.join(', ')}`
+        );
+      }
+      if (result.skipped.length > 0) {
+        console.log(
+          `⏭️  stake: skipped epoch(s) ${result.skipped.join(', ')} — portal snapshot ` +
+            `missing or stale (retries next cycle; a gap here is unrecoverable)`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ stake sampling failed: ${scrubSecrets(error)}`);
     }
 
     await publishDocuments({

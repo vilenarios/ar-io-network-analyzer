@@ -333,6 +333,48 @@ export const MIGRATIONS: Migration[] = [
          loaded_at  INTEGER NOT NULL
        )`,
     ],
+  },
+  {
+    version: 7,
+    name: 'stake-samples',
+    statements: [
+      // One row per staking POSITION per settled epoch.
+      //
+      // WHY THIS TABLE HAS TO EXIST. Rewards compound directly into stake —
+      // 98.4% of delegations carry sub-ARIO precision and the large ones sit
+      // just above round numbers (2,000,000 staked, 2,016,682.247752 held).
+      // Nothing on chain records what a position has EARNED; only what it
+      // currently holds. So earnings are a difference between two observations,
+      // and without retention there is only ever one observation.
+      //
+      // AND WHY IT CANNOT WAIT. `DistributeEpoch` moves rewards into a
+      // program-owned custody account and credits positions in PDA state, which
+      // has no per-transaction history. Unlike the protocol balance — recovered
+      // from `postTokenBalances` — a stake at a past epoch is NOT recoverable
+      // afterwards. Every epoch that passes unsampled is permanently lost.
+      //
+      // `kind` distinguishes an operator's own stake from a delegation.
+      // Operators were the obvious omission the first time this was scoped:
+      // they hold 8.7M ARIO against delegates' 10.0M.
+      //
+      // The key is (epoch, kind, address, gateway) because one wallet may
+      // delegate to many gateways, and each delegation earns separately.
+      `CREATE TABLE IF NOT EXISTS stake_samples (
+         epoch_index     INTEGER NOT NULL,
+         kind            TEXT    NOT NULL,
+         address         TEXT    NOT NULL,
+         gateway_address TEXT    NOT NULL,
+         staked          INTEGER NOT NULL,
+         vaulted         INTEGER NOT NULL,
+         start_timestamp INTEGER,
+         sampled_at      INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, kind, address, gateway_address)
+       )`,
+      // Reading one position's history across epochs is the query the portal
+      // makes for "what have I earned"; without this it is a full scan.
+      `CREATE INDEX IF NOT EXISTS idx_stake_samples_position
+         ON stake_samples (kind, address, gateway_address, epoch_index)`,
+    ],
   }
 
 ];
