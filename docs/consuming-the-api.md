@@ -191,7 +191,8 @@ curl -s https://network.services.ar.io/api/v1/rewards.json \
       .epochs as $e
       | .positions[] | select(.address == $me)
       | { gateway: .gatewayAddress, basis: .basis,
-          totalARIO: (.totalRewards / 1e6),
+          lifetimeARIO: (.lifetimeRewards / 1e6),
+          windowARIO: (.windowRewards / 1e6),
           stakeARIO: (.currentStake / 1e6),
           perEpoch: [ $e, (.rewards | map(if . == null then null else ./1e6 end)) ] | transpose }'
 ```
@@ -203,9 +204,16 @@ gateway operators because `DistributeEpoch` emits only an epoch summary and no
 per-operator record. Do not present the two as equivalent.
 
 **`rewards` is aligned index-for-index with the top-level `epochs`.** A `null`
-means that epoch was scanned and this position earned nothing. An epoch *absent*
-from `epochs` was never scanned — render it as a gap, never a zero. "Scanned and
-empty" and "not looked at" are different facts.
+means that epoch was scanned and this position earned nothing — or, for an
+operator, that the epoch could not be derived honestly because the stake moved
+for a non-reward reason. An epoch *absent* from `epochs` was never scanned, or
+is older than the window. Render either as a gap, never a zero.
+
+**`epochs` is a rolling window of the most recent 30; `lifetimeRewards` is not
+windowed.** Unbounded arrays project to ~12.5 MB after a year, so the chart is
+capped while the lifetime figure stays correct forever. Show `lifetimeRewards`
+for "what have I earned", `windowRewards` and `rewards[]` for the chart, and
+`totalEpochsRecorded` to say how much history exists.
 
 #### Computing a yield, without lying
 
@@ -216,7 +224,7 @@ here, so do it explicitly:
 ```bash
 # network-wide realized delegate yield
 curl -s https://network.services.ar.io/api/v1/rewards.json \
-  | jq '(.epochs | length) as $n
+  | jq '(.totalEpochsRecorded) as $n
         | (.totals.delegateRewards / 1e6) as $r
         | ([.positions[] | select(.currentStake != null) | .currentStake] | add / 1e6) as $s
         | { epochs: $n, rewardsARIO: $r, stakeARIO: $s,

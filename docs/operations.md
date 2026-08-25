@@ -336,6 +336,26 @@ An epoch scanned with no events is recorded in `delegate_reward_scans` with
 `events = 0`. That distinction matters: without it, an epoch nobody looked at is
 indistinguishable from one where nobody earned.
 
+**Operator earnings are derived, and null when they cannot be derived
+honestly.** `deriveOperatorRewards` subtracts consecutive stake observations,
+which is only valid if nothing else moved the stake. `stake_change_flags`
+records the epochs where something did — `DecreaseOperatorStake`, `JoinNetwork`
+or `ClaimWithdrawal` — and those epochs yield null with a reason rather than a
+contaminated number. Roughly 1.2% of operator positions are flagged in any
+epoch (~7.7 stake decreases per day across 645 gateways), so the rest get a
+clean figure.
+
+Flags are attributed by instruction name AND self-signature: the gateway is
+flagged only when it appears in the accounts and its registered operator IS the
+transaction signer. Matching on account presence alone is what invalidated an
+earlier attempt to read operator rewards from payout transactions — the account
+that cranks epoch distribution is itself a gateway operator, so its gateway
+appeared in every payout it submitted (30 of 30 sampled). Over-flagging is the
+safe direction: a flagged epoch yields a gap, never a wrong number.
+
+Detection runs inside the reward scan, so it costs **no additional RPC** — the
+same transactions are already being read.
+
 **Operator earnings are NOT replayable, and this is the part that needs
 watching.** `DistributeEpoch` emits only an epoch summary — no per-operator
 record — so an operator's earnings can only come from `stake_samples` taken
@@ -350,6 +370,14 @@ it will retry, which is fine — repeated skips across an epoch boundary are not
 
 Sampling costs **zero additional RPC**: positions are read from the portal
 snapshot already on disk rather than re-queried.
+
+**Scaling.** `stake_samples` grows ~1,134 rows per epoch, about 414k rows and
+~11 MB a year; `delegate_rewards` about 80k rows a year. Both are trivial for
+SQLite, and the derivation query is served by
+`idx_stake_samples_position`. The published document is the thing that would
+NOT have scaled: unbounded per-epoch arrays project to ~12.5 MB after a year,
+so `rewards.json` publishes a rolling 30-epoch window while `lifetimeRewards`
+stays complete. A findings cycle currently consumes ~1.1s CPU end to end.
 
 ## 6. Backup
 

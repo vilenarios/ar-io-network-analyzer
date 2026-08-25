@@ -32,6 +32,7 @@ import { readStakePositions } from '../rewards/inputs.js';
 import { sampleStakePositions } from '../rewards/sample.js';
 import { createProgramReader } from '../rewards/program-reader.js';
 import { buildRewardsDocument } from '../rewards/document.js';
+import { deriveOperatorRewards } from '../rewards/operator.js';
 import { epochsAwaitingRewardScan, scanDelegateRewards } from '../rewards/scan.js';
 import { publicDir } from '../publish/publish.js';
 import {
@@ -291,7 +292,20 @@ async function main(): Promise<void> {
     try {
       const pending = epochsAwaitingRewardScan(db, 2);
       if (pending.length > 0) {
-        const result = await scanDelegateRewards(db, createProgramReader(), pending);
+        // `operatorOf` enables stake-change detection in the same pass, at no
+        // extra RPC: the transactions are already being read for reward events.
+        // Sourced from the portal snapshot, which is the document that actually
+        // carries the gateway->operator mapping.
+        const snapshot = readStakePositions(publicDir());
+        const operatorByGateway = new Map(
+          (snapshot?.positions ?? [])
+            .filter((position) => position.kind === 'operator')
+            .map((position) => [position.gatewayAddress, position.address])
+        );
+        const result = await scanDelegateRewards(db, {
+          ...createProgramReader(),
+          operatorOf: (gatewayAddress) => operatorByGateway.get(gatewayAddress) ?? null,
+        }, pending);
         console.log(
           `🎁 rewards: ${result.events} event(s), ` +
             `${(result.totalAmount / 1e6).toFixed(6)} ARIO across epoch(s) ${result.epochs.join(', ')}`
@@ -316,7 +330,8 @@ async function main(): Promise<void> {
         (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
         listDelegateRewards(db),
         latestStakePerPosition(db),
-        new Date().toISOString()
+        new Date().toISOString(),
+        deriveOperatorRewards(db)
       ),
       epochDocs: epochs.map((epoch) => ({
         epochIndex: epoch.epochIndex,

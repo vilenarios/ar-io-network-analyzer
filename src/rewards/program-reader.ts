@@ -11,7 +11,10 @@ const MAINNET_RPC_URL = 'https://api.mainnet-beta.solana.com';
 
 export interface ProgramReader {
   listSignatures: (sinceSeconds: number) => Promise<ScanTransaction[]>;
-  logsFor: (signature: string) => Promise<readonly string[] | null>;
+  logsFor: (signature: string) => Promise<{
+    logMessages: readonly string[];
+    accountKeys: readonly string[];
+  } | null>;
   rpcCalls: () => number;
 }
 
@@ -19,7 +22,10 @@ export function createProgramReader(
   url = process.env.SOLANA_RPC_URL || MAINNET_RPC_URL
 ): ProgramReader {
   let calls = 0;
-  const logs = new Map<string, readonly string[] | null>();
+  const logs = new Map<
+    string,
+    { logMessages: readonly string[]; accountKeys: readonly string[] } | null
+  >();
 
   async function rpc<T>(method: string, params: unknown[]): Promise<T> {
     calls++;
@@ -59,11 +65,22 @@ export function createProgramReader(
 
     async logsFor(signature) {
       if (logs.has(signature)) return logs.get(signature) ?? null;
-      const tx = await rpc<{ meta?: { logMessages?: string[]; err?: unknown } | null }>(
-        'getTransaction',
-        [signature, { encoding: 'json', maxSupportedTransactionVersion: 0 }]
-      );
-      const result = tx?.meta && !tx.meta.err ? (tx.meta.logMessages ?? []) : null;
+      const tx = await rpc<{
+        meta?: { logMessages?: string[]; err?: unknown } | null;
+        transaction?: { message?: { accountKeys?: string[] } };
+      }>('getTransaction', [
+        signature,
+        { encoding: 'json', maxSupportedTransactionVersion: 0 },
+      ]);
+      // `json` encoding gives accountKeys as plain strings in order, index 0
+      // being the fee payer and signer — which is what attribution checks.
+      const result =
+        tx?.meta && !tx.meta.err
+          ? {
+              logMessages: tx.meta.logMessages ?? [],
+              accountKeys: tx.transaction?.message?.accountKeys ?? [],
+            }
+          : null;
       logs.set(signature, result);
       return result;
     },

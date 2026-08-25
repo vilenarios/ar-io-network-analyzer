@@ -15,6 +15,14 @@
  * Publishing both under one `rewards` field with no distinction would make an
  * inferred figure indistinguishable from a measured one.
  *
+ * BOUNDED SIZE. The per-epoch arrays would otherwise grow without limit: at
+ * ~36 bytes per position-epoch, a year of daily epochs across ~1,000 positions
+ * projects to roughly 12.5 MB, which every consumer would download to read one
+ * row. So the arrays cover a rolling window of the most recent
+ * `REWARDS_WINDOW_EPOCHS`, while `lifetimeRewards` is computed over the FULL
+ * history and is never truncated. "What have I earned in total" therefore stays
+ * correct forever; only the per-epoch chart is bounded.
+ *
  * NO APY FIELD, deliberately, in the same spirit as publishing no `revenue`.
  * An annual rate from days of history is an extrapolation, and which one is a
  * presentation decision: simple or compounded, time-weighted or not, per
@@ -23,7 +31,15 @@
  * it explicitly and label it honestly.
  */
 
-export const REWARDS_SCHEMA_VERSION = '1.0';
+export const REWARDS_SCHEMA_VERSION = '1.1';
+
+/**
+ * How many recent epochs carry a per-epoch breakdown.
+ *
+ * Thirty daily epochs is a month of chart, ~850 KB at present position counts
+ * and well under 200 KB gzipped. Lifetime totals are unaffected by this.
+ */
+export const REWARDS_WINDOW_EPOCHS = 30;
 
 export interface RewardPosition {
   kind: 'delegate' | 'operator';
@@ -35,9 +51,17 @@ export interface RewardPosition {
    * distinct from an epoch missing from `epochs`, which was never scanned.
    */
   rewards: (number | null)[];
-  /** Sum of the non-null entries above, mARIO. */
-  totalRewards: number;
-  /** Epochs in which this position was credited. */
+  /** Sum of the non-null entries above — the published WINDOW only, mARIO. */
+  windowRewards: number;
+  /**
+   * Total earned across the position's whole recorded history, mARIO.
+   *
+   * Computed over every scanned epoch, not just the published window, so it
+   * stays correct as the window rolls forward. This is the number to show for
+   * "what have I earned".
+   */
+  lifetimeRewards: number;
+  /** Epochs in which this position was credited, over the whole history. */
   epochsRewarded: number;
   /** Most recent observed stake, mARIO, or null if never sampled. */
   currentStake: number | null;
@@ -48,11 +72,17 @@ export interface RewardPosition {
 export interface RewardsDocument {
   schemaVersion: string;
   generatedAt: string;
-  /** Epoch indexes the `rewards` arrays are aligned to, oldest first. */
+  /**
+   * Epoch indexes the `rewards` arrays are aligned to, oldest first — a rolling
+   * window, NOT the full history. `lifetimeRewards` covers everything.
+   */
   epochs: number[];
+  /** Epochs actually recorded, of which `epochs` publishes the most recent. */
+  totalEpochsRecorded: number;
   /** Epoch end times, unix ms, aligned to `epochs`. */
   epochEndTimestamps: (number | null)[];
   counts: { delegate: number; operator: number };
+  /** Lifetime sums across all positions, mARIO. */
   totals: { delegateRewards: number; operatorRewards: number };
   positions: RewardPosition[];
 }
@@ -76,14 +106,25 @@ export interface StakeRow {
  *   these appear in `epochs`, so a consumer can never read an unscanned epoch
  *   as one in which nothing was earned.
  */
+export interface OperatorRewardRow {
+  epochIndex: number;
+  address: string;
+  gatewayAddress: string;
+  reward: number | null;
+}
+
 export function buildRewardsDocument(
   scannedEpochs: number[],
   epochEndSeconds: (epochIndex: number) => number | null,
   rewardRows: RewardRow[],
   stakeRows: StakeRow[],
-  generatedAt: string
+  generatedAt: string,
+  operatorRows: OperatorRewardRow[] = [],
+  windowEpochs: number = REWARDS_WINDOW_EPOCHS
 ): RewardsDocument {
-  const epochs = [...scannedEpochs].sort((a, b) => a - b);
+  const allEpochs = [...scannedEpochs].sort((a, b) => a - b);
+  // The published window is the tail; lifetime figures below use every epoch.
+  const epochs = allEpochs.slice(-windowEpochs);
   const slotOf = new Map(epochs.map((epochIndex, index) => [epochIndex, index]));
 
   const stakeByPosition = new Map(
@@ -92,42 +133,75 @@ export function buildRewardsDocument(
 
   const positions = new Map<string, RewardPosition>();
 
-  for (const row of rewardRows) {
-    const slot = slotOf.get(row.epochIndex);
-    if (slot === undefined) continue;
-
-    const key = `delegate|${row.delegate}|${row.gateway}`;
+  function upsert(
+    key: string,
+    kind: 'delegate' | 'operator',
+    address: string,
+    gatewayAddress: string,
+    basis: 'events' | 'inferred'
+  ): RewardPosition {
     let position = positions.get(key);
     if (!position) {
       position = {
-        kind: 'delegate',
-        address: row.delegate,
-        gatewayAddress: row.gateway,
+        kind,
+        address,
+        gatewayAddress,
         rewards: epochs.map(() => null),
-        totalRewards: 0,
+        windowRewards: 0,
+        lifetimeRewards: 0,
         epochsRewarded: 0,
         currentStake: stakeByPosition.get(key) ?? null,
-        basis: 'events',
+        basis,
       };
       positions.set(key, position);
     }
-
-    // Summed rather than assigned: the store already aggregates per epoch, but
-    // a duplicated row must not silently overwrite a real one.
-    position.rewards[slot] = (position.rewards[slot] ?? 0) + row.amount;
-    position.totalRewards += row.amount;
+    return position;
   }
 
-  for (const position of positions.values()) {
-    position.epochsRewarded = position.rewards.filter((value) => value !== null).length;
+  /** Record one epoch's amount: lifetime always, the array only in-window. */
+  function credit(position: RewardPosition, epochIndex: number, amount: number): void {
+    position.lifetimeRewards += amount;
+    position.epochsRewarded++;
+    const slot = slotOf.get(epochIndex);
+    if (slot === undefined) return;
+    position.rewards[slot] = (position.rewards[slot] ?? 0) + amount;
+    position.windowRewards += amount;
   }
 
-  const ordered = [...positions.values()].sort((a, b) => b.totalRewards - a.totalRewards);
+  for (const row of rewardRows) {
+    const position = upsert(
+      `delegate|${row.delegate}|${row.gateway}`,
+      'delegate',
+      row.delegate,
+      row.gateway,
+      'events'
+    );
+    credit(position, row.epochIndex, row.amount);
+  }
+
+  // Operator rows are derived, not measured, and carry `basis: 'inferred'` so
+  // the difference survives into the document rather than being flattened.
+  for (const row of operatorRows) {
+    const position = upsert(
+      `operator|${row.address}|${row.gatewayAddress}`,
+      'operator',
+      row.address,
+      row.gatewayAddress,
+      'inferred'
+    );
+    // A null stays null: an epoch whose stake was disturbed has no honest
+    // figure, and treating it as zero would understate earnings silently.
+    if (row.reward === null) continue;
+    credit(position, row.epochIndex, row.reward);
+  }
+
+  const ordered = [...positions.values()].sort((a, b) => b.lifetimeRewards - a.lifetimeRewards);
 
   return {
     schemaVersion: REWARDS_SCHEMA_VERSION,
     generatedAt,
     epochs,
+    totalEpochsRecorded: allEpochs.length,
     epochEndTimestamps: epochs.map((epochIndex) => {
       const seconds = epochEndSeconds(epochIndex);
       // Seconds in the store, milliseconds on the wire — publishing raw puts
@@ -141,10 +215,10 @@ export function buildRewardsDocument(
     totals: {
       delegateRewards: ordered
         .filter((p) => p.kind === 'delegate')
-        .reduce((sum, p) => sum + p.totalRewards, 0),
-      // Operator earnings need two stake observations; until then this is
-      // honestly zero rather than a number nothing supports.
-      operatorRewards: 0,
+        .reduce((sum, p) => sum + p.lifetimeRewards, 0),
+      operatorRewards: ordered
+        .filter((p) => p.kind === 'operator')
+        .reduce((sum, p) => sum + p.lifetimeRewards, 0),
     },
     positions: ordered,
   };

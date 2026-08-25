@@ -415,6 +415,41 @@ export const MIGRATIONS: Migration[] = [
          transactions INTEGER NOT NULL
        )`,
     ],
+  },
+  {
+    version: 9,
+    name: 'stake-change-flags',
+    statements: [
+      // Epochs in which a position's stake moved for a reason that is NOT a
+      // reward — the operator staked, withdrew, or claimed a withdrawal.
+      //
+      // WHY FLAGS AND NOT AMOUNTS. An operator's earnings are inferred from the
+      // change in their stake across an epoch, which only equals their reward
+      // if nothing else moved. Rather than parse each instruction's amount and
+      // risk a wrong subtraction, this records THAT the position was disturbed
+      // and the derivation returns null for that epoch. A gap a consumer can
+      // see beats a number nobody can check.
+      //
+      // Cheap in practice: ~7.7 DecreaseOperatorStake per day across 645
+      // gateways, so roughly 1.2% of operator positions are flagged in any
+      // epoch and the rest get a clean figure.
+      //
+      // Attribution is by instruction name AND self-signature: these
+      // instructions are signed by the operator themselves, so the gateway is
+      // flagged only when it appears in the accounts and its operator IS the
+      // signer. Matching on account presence alone is what produced an earlier
+      // invalid attribution — the epoch distributor's own gateway appeared in
+      // every payout it cranked.
+      `CREATE TABLE IF NOT EXISTS stake_change_flags (
+         epoch_index     INTEGER NOT NULL,
+         kind            TEXT    NOT NULL,
+         address         TEXT    NOT NULL,
+         gateway_address TEXT    NOT NULL,
+         instruction     TEXT    NOT NULL,
+         occurrences     INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, kind, address, gateway_address, instruction)
+       )`,
+    ],
   }
 
 ];

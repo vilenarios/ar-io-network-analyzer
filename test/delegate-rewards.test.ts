@@ -92,7 +92,10 @@ function deps(logsBySignature: Record<string, string[]>, errored: string[] = [])
         blockTime: Date.parse('2026-08-25T00:41:33Z') / 1000,
         err: errored.includes(signature) ? { InstructionError: [0, 'Custom'] } : null,
       })),
-    logsFor: async (signature) => logsBySignature[signature] ?? null,
+    logsFor: async (signature) =>
+      logsBySignature[signature]
+        ? { logMessages: logsBySignature[signature], accountKeys: [] }
+        : null,
   };
 }
 

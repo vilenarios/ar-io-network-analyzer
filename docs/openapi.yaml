@@ -223,6 +223,15 @@ paths:
         Blending the two under one field would make an inferred figure
         indistinguishable from a measured one, so they are labelled instead.
 
+        **The per-epoch arrays are a ROLLING WINDOW; lifetime totals are not.**
+        Left unbounded these arrays project to ~12.5 MB after a year of daily
+        epochs, which every consumer would download to read one row. `epochs`
+        therefore carries the most recent 30, `totalEpochsRecorded` says how
+        many exist, and `lifetimeRewards` is computed over the FULL history and
+        never truncated. Show `lifetimeRewards` for "what have I earned";
+        use the arrays for the chart. A position that earned only outside the
+        window keeps its lifetime figure and has an all-null array.
+
         **`rewards` is aligned index-for-index with the top-level `epochs`.**
         A `null` entry means that epoch was scanned and this position earned
         nothing. An epoch absent from `epochs` was never scanned, and must not
@@ -877,9 +886,14 @@ components:
           type: array
           items: { type: integer }
           description: >
-            Epochs actually scanned, oldest first. `positions[].rewards` is
-            aligned to this index-for-index. An epoch NOT listed was never
-            scanned and must not be shown as zero earnings.
+            The most recent scanned epochs, oldest first — a ROLLING WINDOW, not
+            the full history. `positions[].rewards` is aligned to this
+            index-for-index. An epoch not listed is either outside the window
+            (see `lifetimeRewards`) or was never scanned; either way it must not
+            be shown as zero earnings.
+        totalEpochsRecorded:
+          type: integer
+          description: How many epochs exist in total, of which `epochs` is the tail.
         epochEndTimestamps:
           type: array
           items: { type: [integer, 'null'] }
@@ -892,8 +906,9 @@ components:
         totals:
           type: object
           description: >
-            Sums in mARIO. `operatorRewards` is 0 until two stake snapshots
-            exist, because nothing yet supports a non-zero figure.
+            LIFETIME sums in mARIO across all positions, not windowed.
+            `operatorRewards` stays 0 until two stake snapshots exist, because
+            until then nothing supports a non-zero figure.
           properties:
             delegateRewards: { type: integer }
             operatorRewards: { type: integer }
@@ -915,10 +930,20 @@ components:
                 type: array
                 items: { type: [integer, 'null'] }
                 description: >
-                  mARIO credited per epoch, aligned to the top-level `epochs`.
-                  `null` means scanned and nothing earned.
-              totalRewards: { type: integer, description: Sum of non-null entries, mARIO. }
-              epochsRewarded: { type: integer }
+                  mARIO credited per epoch, aligned to the top-level `epochs`
+                  (a rolling window). `null` means scanned and nothing earned.
+                  For an operator it also means the epoch could not be derived
+                  honestly — the stake moved for a non-reward reason.
+              windowRewards:
+                type: integer
+                description: Sum over the published window only, mARIO.
+              lifetimeRewards:
+                type: integer
+                description: >
+                  Total earned across the whole recorded history, mARIO, never
+                  truncated by the window. THIS is the "what have I earned"
+                  number.
+              epochsRewarded: { type: integer, description: Over the whole history. }
               currentStake:
                 type: [integer, 'null']
                 description: >

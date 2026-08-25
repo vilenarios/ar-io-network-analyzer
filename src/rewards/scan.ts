@@ -14,6 +14,7 @@
 
 import type { Database } from 'better-sqlite3';
 import { decodeRewardEvents, type DelegateRewardEvent } from './events.js';
+import { detectStakeChanges } from './stake-changes.js';
 
 /** The ARIO program, whose transactions carry the reward events. */
 export const ARIO_PROGRAM_ID =
@@ -28,8 +29,19 @@ export interface ScanTransaction {
 export interface ScanDeps {
   /** Program signatures, newest first, back to at least `sinceSeconds`. */
   listSignatures: (sinceSeconds: number) => Promise<ScanTransaction[]>;
-  /** Log messages for a transaction, or null when unavailable. */
-  logsFor: (signature: string) => Promise<readonly string[] | null>;
+  /**
+   * Logs AND account keys for a transaction, or null when unavailable.
+   *
+   * Both come from one `getTransaction`, so detecting stake changes alongside
+   * reward events costs no additional RPC — the same transactions are already
+   * being read.
+   */
+  logsFor: (signature: string) => Promise<{
+    logMessages: readonly string[];
+    accountKeys: readonly string[];
+  } | null>;
+  /** Resolves a gateway to its registered operator; null if unknown. */
+  operatorOf?: (gatewayAddress: string) => string | null;
 }
 
 export interface ScanResult {
@@ -38,6 +50,8 @@ export interface ScanResult {
   events: number;
   transactions: number;
   totalAmount: number;
+  /** Position-epochs flagged as disturbed by a non-reward stake movement. */
+  stakeChanges: number;
 }
 
 interface EpochBoundary {
@@ -74,7 +88,7 @@ export async function scanDelegateRewards(
 ): Promise<ScanResult> {
   const now = options.now ?? Date.now();
   if (epochIndexes.length === 0) {
-    return { epochs: [], events: 0, transactions: 0, totalAmount: 0 };
+    return { epochs: [], events: 0, transactions: 0, totalAmount: 0, stakeChanges: 0 };
   }
 
   const boundaries = db
@@ -91,7 +105,7 @@ export async function scanDelegateRewards(
     .filter((b) => wanted.has(b.epochIndex))
     .reduce((min, b) => Math.min(min, b.endSeconds), Number.POSITIVE_INFINITY);
   if (!Number.isFinite(earliest)) {
-    return { epochs: [], events: 0, transactions: 0, totalAmount: 0 };
+    return { epochs: [], events: 0, transactions: 0, totalAmount: 0, stakeChanges: 0 };
   }
 
   const signatures = (await deps.listSignatures(earliest))
@@ -108,13 +122,30 @@ export async function scanDelegateRewards(
   let events = 0;
   let transactions = 0;
   let totalAmount = 0;
+  const flags = new Map<string, { epochIndex: number; flag: ReturnType<typeof detectStakeChanges>[number]; count: number }>();
 
   for (const entry of signatures) {
-    const logs = await deps.logsFor(entry.signature);
-    if (!logs) continue;
+    const tx = await deps.logsFor(entry.signature);
+    if (!tx) continue;
     transactions++;
 
-    for (const event of decodeRewardEvents(logs)) {
+    // Stake movements are attributed to the epoch the transaction fell IN,
+    // unlike rewards which belong to the epoch that just ended: a deposit made
+    // during an epoch disturbs that epoch's stake delta.
+    if (deps.operatorOf) {
+      const epochOfTx = epochForRewardAt(boundaries, Number(entry.blockTime));
+      const disturbed = epochOfTx === null ? null : epochOfTx + 1;
+      if (disturbed !== null && wanted.has(disturbed)) {
+        for (const flag of detectStakeChanges(tx, deps.operatorOf)) {
+          const key = `${disturbed}|${flag.kind}|${flag.address}|${flag.gatewayAddress}|${flag.instruction}`;
+          const existing = flags.get(key);
+          if (existing) existing.count++;
+          else flags.set(key, { epochIndex: disturbed, flag, count: 1 });
+        }
+      }
+    }
+
+    for (const event of decodeRewardEvents(tx.logMessages)) {
       const epochIndex = epochForRewardAt(boundaries, event.at);
       if (epochIndex === null || !wanted.has(epochIndex)) continue;
 
@@ -153,8 +184,24 @@ export async function scanDelegateRewards(
        (epoch_index, scanned_at, events, transactions) VALUES (?, ?, ?, ?)`
   );
 
+  const flagStmt = db.prepare(
+    `INSERT OR REPLACE INTO stake_change_flags
+       (epoch_index, kind, address, gateway_address, instruction, occurrences)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  );
+
   const scanned = new Set<number>();
   db.transaction(() => {
+    for (const row of flags.values()) {
+      flagStmt.run(
+        row.epochIndex,
+        row.flag.kind,
+        row.flag.address,
+        row.flag.gatewayAddress,
+        row.flag.instruction,
+        row.count
+      );
+    }
     for (const row of totals.values()) {
       upsert.run(
         row.epochIndex,
@@ -185,6 +232,7 @@ export async function scanDelegateRewards(
     events,
     transactions,
     totalAmount,
+    stakeChanges: flags.size,
   };
 }
 
