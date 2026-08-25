@@ -18,6 +18,9 @@ import {
   listEpochs,
   epochEndTimestampSeconds,
   listEconomicsSamples,
+  listScannedRewardEpochs,
+  listDelegateRewards,
+  latestStakePerPosition,
   listFindings,
   upsertFindings,
 } from '../db/repo-read.js';
@@ -27,6 +30,9 @@ import { sampleEconomics } from '../economics/sample.js';
 import { createBalanceReader } from '../economics/solana-balance.js';
 import { readStakePositions } from '../rewards/inputs.js';
 import { sampleStakePositions } from '../rewards/sample.js';
+import { createProgramReader } from '../rewards/program-reader.js';
+import { buildRewardsDocument } from '../rewards/document.js';
+import { epochsAwaitingRewardScan, scanDelegateRewards } from '../rewards/scan.js';
 import { publicDir } from '../publish/publish.js';
 import {
   DETECTOR_VERSION,
@@ -279,12 +285,37 @@ async function main(): Promise<void> {
       console.error(`❌ stake sampling failed: ${scrubSecrets(error)}`);
     }
 
+    // Record exact delegate rewards from the program's own events. Unlike the
+    // stake sample this is replayable — the events are immutable log data — so
+    // a failure here costs nothing permanent and the epoch is simply rescanned.
+    try {
+      const pending = epochsAwaitingRewardScan(db, 2);
+      if (pending.length > 0) {
+        const result = await scanDelegateRewards(db, createProgramReader(), pending);
+        console.log(
+          `🎁 rewards: ${result.events} event(s), ` +
+            `${(result.totalAmount / 1e6).toFixed(6)} ARIO across epoch(s) ${result.epochs.join(', ')}`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ reward scan failed: ${scrubSecrets(error)}`);
+    }
+
     await publishDocuments({
       observers: buildObserversDocument(epochs, publishable, roster.gateways),
       findings: buildFindingsDocument(publishable, epochs, config),
       economics: buildEconomicsDocument(
         listEconomicsSamples(db),
         (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
+        new Date().toISOString()
+      ),
+      rewards: buildRewardsDocument(
+        // Only epochs actually scanned, so an unscanned one can never be read
+        // as an epoch in which a position earned nothing.
+        listScannedRewardEpochs(db),
+        (epochIndex) => epochEndTimestampSeconds(db, epochIndex),
+        listDelegateRewards(db),
+        latestStakePerPosition(db),
         new Date().toISOString()
       ),
       epochDocs: epochs.map((epoch) => ({

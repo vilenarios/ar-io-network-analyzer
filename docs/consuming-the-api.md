@@ -177,6 +177,67 @@ daily close.
 Every row is anchored to its epoch boundary (`endTimestamp`, with `slot`
 pinning the exact read), so consecutive rows really are one epoch apart.
 
+### `rewards.json` — what a position has actually earned
+
+Per-position earnings, so you can show "you have earned this much" rather than
+only "you currently hold this much". Rewards compound straight into stake, so
+on-chain state never records what was earned — the difference has to come from
+somewhere, and this document is that somewhere.
+
+```bash
+# one wallet's earnings, per epoch and in total
+curl -s https://network.services.ar.io/api/v1/rewards.json \
+  | jq --arg me "$ADDRESS" '
+      .epochs as $e
+      | .positions[] | select(.address == $me)
+      | { gateway: .gatewayAddress, basis: .basis,
+          totalARIO: (.totalRewards / 1e6),
+          stakeARIO: (.currentStake / 1e6),
+          perEpoch: [ $e, (.rewards | map(if . == null then null else ./1e6 end)) ] | transpose }'
+```
+
+**`basis` is the field to read first.** `events` means exact: decoded from the
+program's own `CompoundDelegationRewards` events, which name the delegate, the
+gateway and the amount. `inferred` means derived from stake movement, used for
+gateway operators because `DistributeEpoch` emits only an epoch summary and no
+per-operator record. Do not present the two as equivalent.
+
+**`rewards` is aligned index-for-index with the top-level `epochs`.** A `null`
+means that epoch was scanned and this position earned nothing. An epoch *absent*
+from `epochs` was never scanned — render it as a gap, never a zero. "Scanned and
+empty" and "not looked at" are different facts.
+
+#### Computing a yield, without lying
+
+There is deliberately no APY field. Annualizing days of history is an
+extrapolation, and which one is a presentation decision. The components are all
+here, so do it explicitly:
+
+```bash
+# network-wide realized delegate yield
+curl -s https://network.services.ar.io/api/v1/rewards.json \
+  | jq '(.epochs | length) as $n
+        | (.totals.delegateRewards / 1e6) as $r
+        | ([.positions[] | select(.currentStake != null) | .currentStake] | add / 1e6) as $s
+        | { epochs: $n, rewardsARIO: $r, stakeARIO: $s,
+            dailyYieldPct: (($r/$n)/$s*100),
+            simpleAprPct: (($r/$n)/$s*365*100) }'
+```
+
+As of epoch 523 that is **18,204.68 ARIO over 16 epochs on 8,319,422.71 ARIO of
+stake — 0.0137% per day, ~5.0% simple APR, ~5.1% compounded.**
+
+Three ways to get this wrong, all of which produce a confident number:
+
+- **Dividing by `epochsRewarded` instead of elapsed epochs.** A position credited
+  in 2 of 16 epochs then looks like it earns every epoch. Always divide by the
+  epochs that actually passed.
+- **Trusting `currentStake` for a historical yield.** It is today's stake. Anyone
+  who withdrew shows a wildly inflated return — the per-position spread here runs
+  from 0.22% to over 1000% for exactly this reason, while the aggregate is ~5%.
+- **Calling it APY.** Sixteen days is not a year. Prefer "realized yield over N
+  epochs" until the history justifies annualizing.
+
 ### `epochs/<n>.json` — the irreplaceable one
 
 Per-epoch observation reports: `observer`, `reportTxId`, `submittedAt`,

@@ -375,6 +375,46 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX IF NOT EXISTS idx_stake_samples_position
          ON stake_samples (kind, address, gateway_address, epoch_index)`,
     ],
+  },
+  {
+    version: 8,
+    name: 'delegate-rewards',
+    statements: [
+      // Exact per-delegation rewards, decoded from CompoundDelegationRewards
+      // events rather than inferred from stake movement.
+      //
+      // Separate from `stake_samples` because it is a different kind of fact
+      // with different guarantees: a sample is an observation that can never be
+      // recovered if missed, whereas these events live in transaction logs and
+      // can be re-derived from chain history at any time. Conflating them would
+      // hide that a row here is replayable and a row there is not.
+      //
+      // `amount` is what the program actually credited, so no deposit or
+      // withdrawal can be mistaken for earnings — the failure mode of deriving
+      // rewards from a stake delta.
+      `CREATE TABLE IF NOT EXISTS delegate_rewards (
+         epoch_index INTEGER NOT NULL,
+         delegate    TEXT    NOT NULL,
+         gateway     TEXT    NOT NULL,
+         amount      INTEGER NOT NULL,
+         event_count INTEGER NOT NULL,
+         first_at    INTEGER NOT NULL,
+         last_at     INTEGER NOT NULL,
+         PRIMARY KEY (epoch_index, delegate, gateway)
+       )`,
+      // "What have I earned" is a per-delegate scan across epochs.
+      `CREATE INDEX IF NOT EXISTS idx_delegate_rewards_delegate
+         ON delegate_rewards (delegate, epoch_index)`,
+      // Records which epochs have been scanned, so an epoch with genuinely zero
+      // rewards is distinguishable from one never looked at. Without this an
+      // unscanned epoch reads as "earned nothing".
+      `CREATE TABLE IF NOT EXISTS delegate_reward_scans (
+         epoch_index  INTEGER PRIMARY KEY,
+         scanned_at   INTEGER NOT NULL,
+         events       INTEGER NOT NULL,
+         transactions INTEGER NOT NULL
+       )`,
+    ],
   }
 
 ];

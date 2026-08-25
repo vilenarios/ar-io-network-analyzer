@@ -38,7 +38,8 @@
     "portal:once": "tsx --env-file-if-exists=.env src/portal/daemon.ts --once",
     "portal:status": "tsx --env-file-if-exists=.env src/portal/daemon.ts --status",
     "portal:loadtest": "tsx --env-file-if-exists=.env test/load-test.ts",
-    "economics:backfill": "tsx --env-file-if-exists=.env src/economics/backfill-cli.ts"
+    "economics:backfill": "tsx --env-file-if-exists=.env src/economics/backfill-cli.ts",
+    "rewards:backfill": "tsx --env-file-if-exists=.env src/rewards/backfill-cli.ts"
   },
   "keywords": [
     "ar.io",

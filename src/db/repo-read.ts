@@ -616,3 +616,72 @@ export function epochTotalEligibleRewards(db: Database, epochIndex: number): num
   const value = row?.total_eligible_rewards;
   return value === null || value === undefined ? null : Number(value);
 }
+
+/** Epochs actually scanned for delegate reward events, oldest first. */
+export function listScannedRewardEpochs(db: Database): number[] {
+  return db
+    .prepare<[], { epoch_index: number }>(
+      'SELECT epoch_index FROM delegate_reward_scans ORDER BY epoch_index ASC'
+    )
+    .all()
+    .map((row) => row.epoch_index);
+}
+
+export interface DelegateRewardRow {
+  epochIndex: number;
+  delegate: string;
+  gateway: string;
+  amount: number;
+}
+
+/** Every recorded delegate reward, for building the published document. */
+export function listDelegateRewards(db: Database): DelegateRewardRow[] {
+  return db
+    .prepare<[], { epoch_index: number; delegate: string; gateway: string; amount: number }>(
+      `SELECT epoch_index, delegate, gateway, amount
+         FROM delegate_rewards ORDER BY epoch_index ASC`
+    )
+    .all()
+    .map((row) => ({
+      epochIndex: row.epoch_index,
+      delegate: row.delegate,
+      gateway: row.gateway,
+      amount: Number(row.amount),
+    }));
+}
+
+export interface LatestStakeRow {
+  kind: 'delegate' | 'operator';
+  address: string;
+  gatewayAddress: string;
+  staked: number;
+}
+
+/**
+ * The most recent stake observed for each position.
+ *
+ * Grouped by position and taking the highest epoch, so a position that has
+ * since exited keeps its final observation rather than vanishing.
+ */
+export function latestStakePerPosition(db: Database): LatestStakeRow[] {
+  return db
+    .prepare<[], { kind: string; address: string; gateway_address: string; staked: number }>(
+      `SELECT s.kind, s.address, s.gateway_address, s.staked
+         FROM stake_samples s
+         JOIN (
+           SELECT kind, address, gateway_address, MAX(epoch_index) AS epoch_index
+             FROM stake_samples GROUP BY kind, address, gateway_address
+         ) latest
+           ON latest.kind = s.kind
+          AND latest.address = s.address
+          AND latest.gateway_address = s.gateway_address
+          AND latest.epoch_index = s.epoch_index`
+    )
+    .all()
+    .map((row) => ({
+      kind: row.kind as 'delegate' | 'operator',
+      address: row.address,
+      gatewayAddress: row.gateway_address,
+      staked: Number(row.staked),
+    }));
+}

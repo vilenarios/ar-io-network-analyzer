@@ -30,6 +30,7 @@ import { basename, dirname, join, resolve } from 'path';
 import type { Database } from 'better-sqlite3';
 import { openWriter, tryOpenReader } from '../db/index.js';
 import type { EconomicsDocument } from '../economics/document.js';
+import type { RewardsDocument } from '../rewards/document.js';
 import { consecutiveFailedPollRuns, latestPollRun } from '../db/repo-read.js';
 import {
   SCHEMA_VERSION,
@@ -68,6 +69,12 @@ export interface PublishInput {
    * therefore its ETag.
    */
   economics?: EconomicsDocument;
+
+  /**
+   * Per-position earnings. Written stably like `economics`: settled epochs do
+   * not change, so the bytes should not either.
+   */
+  rewards?: RewardsDocument;
   epochDocs?: Array<{ epochIndex: number; doc: EpochDocument }>;
   homepage?: { html: string; csv: string; summaryJson: string; date: string };
   archiveDate?: string;
@@ -515,6 +522,14 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
       documents.economics = writeDocumentStable(
         'api/v1/economics.json',
         input.economics,
+        generatedAt
+      );
+    }
+
+    if (input.rewards) {
+      documents.rewards = writeDocumentStable(
+        'api/v1/rewards.json',
+        input.rewards,
         generatedAt
       );
     }

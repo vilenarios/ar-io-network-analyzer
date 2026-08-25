@@ -51,6 +51,7 @@ export const OBSERVER_DOCUMENTS = [
   'observers',
   'findings',
   'economics',
+  'rewards',
 ] as const;
 
 export type ObserverDocumentName = (typeof OBSERVER_DOCUMENTS)[number];
@@ -77,6 +78,7 @@ export interface Manifest {
      * serves it.
      */
     economics?: DocumentEntry;
+  rewards?: DocumentEntry;
     epochs?: Array<DocumentEntry & { epochIndex: number }>;
   };
   freshness: {

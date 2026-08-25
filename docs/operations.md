@@ -314,6 +314,43 @@ live samples to the boundary too, so this should only ever be needed once.
 Cost is trivial — about 25 RPC calls for a 16-epoch recovery, since signatures
 are fetched once and transaction lookups are cached and shared.
 
+### 5.7 Earnings: one perishable half and one replayable half
+
+Two mechanisms feed `/api/v1/rewards.json`, and they fail differently.
+
+**Delegate rewards are replayable.** `CompoundDelegationRewards` emits an event
+naming the delegate, gateway and amount. Events live in transaction logs, so
+they can be re-derived at any time:
+
+```bash
+yarn rewards:backfill            # dry run — reports the epochs it would scan
+yarn rewards:backfill --apply
+```
+
+Safe to re-run and safe to interrupt: a rescan recomputes identical totals from
+immutable logs, so writes are `INSERT OR REPLACE`. The initial 16-epoch backfill
+read 2,715 transactions in ~3 minutes using 2,718 RPC calls. The live job scans
+at most 2 unscanned epochs per cycle, so steady-state cost is negligible.
+
+An epoch scanned with no events is recorded in `delegate_reward_scans` with
+`events = 0`. That distinction matters: without it, an epoch nobody looked at is
+indistinguishable from one where nobody earned.
+
+**Operator earnings are NOT replayable, and this is the part that needs
+watching.** `DistributeEpoch` emits only an epoch summary — no per-operator
+record — so an operator's earnings can only come from `stake_samples` taken
+either side of an epoch. Those samples are observations of PDA state, which has
+no transaction history. **A missed epoch is lost permanently.**
+
+So if `arns-observer-findings` stops, delegate rewards can be caught up later
+but operator earnings for those epochs cannot. Treat a stake-sampling gap the
+same way you treat an observation-capture gap. The `🥩 stake:` log line
+confirms it ran; `⏭️  stake: skipped` means the portal snapshot was stale and
+it will retry, which is fine — repeated skips across an epoch boundary are not.
+
+Sampling costs **zero additional RPC**: positions are read from the portal
+snapshot already on disk rather than re-queried.
+
 ## 6. Backup
 
 `data/observations.sqlite` is the only irreplaceable artifact in the repository.
