@@ -30,7 +30,13 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { publicDir, publishOpenApiSpec, writeDocument } from './publish.js';
+import {
+  cleanupScratchTree,
+  publicDir,
+  publishOpenApiSpec,
+  sweepScratchTrees,
+  writeDocument,
+} from './publish.js';
 import type { DocumentEntry } from './contract.js';
 import {
   PORTAL_SCHEMA_VERSION,
@@ -109,6 +115,12 @@ export function publishPortalDocuments(
 ): PortalManifest {
   const generatedAt = now.toISOString();
 
+  // This publisher is a long-lived daemon, so its scratch tree is created once
+  // and was never removed — every restart stranded one permanently. Sweep
+  // first: trees from dead pids are the only ones this touches.
+  const swept = sweepScratchTrees();
+  if (swept > 0) console.log(`🧹 removed ${swept} abandoned scratch tree(s)`);
+
   const documents: Partial<Record<PortalDocumentName, DocumentEntry>> = {
     gateways: writeDocument(
       portalDocumentPath('gateways'),
@@ -175,6 +187,11 @@ export function publishPortalDocuments(
   // in the manifest: it is documentation, not network state, and a consumer
   // diffing document digests should not see churn when only the spec changed.
   publishOpenApiSpec();
+
+  // Every rename has landed, so the tree holds nothing of value. Doing this per
+  // cycle rather than at shutdown means a `kill -9` leaves at most one cycle's
+  // scratch behind, and the sweep above reclaims even that.
+  cleanupScratchTree();
 
   return manifest;
 }

@@ -20,11 +20,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import type { Database } from 'better-sqlite3';
 import { openWriter, tryOpenReader } from '../db/index.js';
 import type { EconomicsDocument } from '../economics/document.js';
@@ -92,6 +94,75 @@ export function publicDir(): string {
  */
 function tmpDir(): string {
   return `${publicDir()}.tmp.${process.pid}`;
+}
+
+/**
+ * How stale a scratch tree belonging to a LIVE pid must be before it is
+ * assumed to be pid reuse rather than a publish in flight. A real publish
+ * writes its tree in seconds, so hours is an enormous margin.
+ */
+const STALE_SCRATCH_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Remove scratch trees abandoned by processes that are no longer running.
+ *
+ * The per-pid naming above fixed two publishers deleting each other's trees,
+ * but it also meant nothing ever reclaimed a tree once its process was gone:
+ * the next run has a different pid and so looks right past it. Every crash,
+ * every failed publish and every daemon restart stranded a directory
+ * permanently. Cleanup on the happy path cannot fix that, because by
+ * definition these are the runs that did not reach it.
+ *
+ * Safe to call while another publisher is mid-write: a tree is only removed if
+ * its pid is genuinely dead, or — guarding against the OS reusing that pid for
+ * some unrelated process — if it is alive but the tree has not been touched for
+ * `STALE_SCRATCH_MS`.
+ */
+export function sweepScratchTrees(): number {
+  const dir = dirname(publicDir());
+  const prefix = `${basename(publicDir())}.tmp.`;
+
+  let removed = 0;
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return 0; // The parent may not exist yet on a first run.
+  }
+
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix)) continue;
+
+    const pid = Number(entry.slice(prefix.length));
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    if (pid === process.pid) continue;
+
+    const path = join(dir, entry);
+    try {
+      if (processIsAlive(pid) && Date.now() - statSync(path).mtimeMs < STALE_SCRATCH_MS) continue;
+      rmSync(path, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // A tree we cannot stat or remove is not worth failing a publish over.
+    }
+  }
+  return removed;
+}
+
+/** `kill(pid, 0)` signals nothing; it only asks whether the pid exists. */
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means it exists but belongs to another user — still alive.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Drop this process's scratch tree. Safe to call more than once. */
+export function cleanupScratchTree(): void {
+  rmSync(tmpDir(), { recursive: true, force: true });
 }
 
 function sha256(content: string | Buffer): string {
@@ -484,11 +555,16 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
     // Manifest last, always.
     writeDocument('api/v1/index.json', manifest, generatedAt);
 
-    // The scratch tree is disposable once every rename has landed.
-    rmSync(tmpDir(), { recursive: true, force: true });
-
     console.log(`📦 published to ${publicDir()}`);
+
+    const swept = sweepScratchTrees();
+    if (swept > 0) console.log(`🧹 removed ${swept} abandoned scratch tree(s)`);
   } finally {
+    // In the `finally`, not the happy path: a publish that throws part-way
+    // through has still created a scratch tree, and leaving it behind was how
+    // these accumulated. Renames already landed are unaffected — the tree only
+    // ever holds files not yet moved into place.
+    cleanupScratchTree();
     lock.release();
   }
 }
