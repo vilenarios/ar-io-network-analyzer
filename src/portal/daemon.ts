@@ -21,7 +21,7 @@
 import { fetchPortalSnapshot } from './fetch.js';
 import { markPortalPublishFailure, publishPortalDocuments, readPortalManifest } from '../publish/portal.js';
 import { assertNodeVersion, scrubSecrets } from '../utils/runtime.js';
-import { publicDir } from '../publish/publish.js';
+import { cleanupScratchTree, publicDir } from '../publish/publish.js';
 
 const DEFAULT_INTERVAL_MS = 600_000; // 10 minutes
 
@@ -158,6 +158,15 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     stopping = true;
     if (timer) clearTimeout(timer);
+    // A publish in flight is abandoned rather than awaited: every write lands
+    // by rename, so the served tree is never torn, and the only thing left
+    // behind is scratch. Drop it here so an orderly stop leaks nothing; a
+    // `kill -9` still cannot run this, which is what the sweep is for.
+    try {
+      cleanupScratchTree();
+    } catch {
+      // Never turn a clean shutdown into a failure over a temp directory.
+    }
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

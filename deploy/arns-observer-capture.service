@@ -16,8 +16,12 @@ EnvironmentFile=/programs/ar-io-network-analyzer/.env
 # systemd does not inherit a login PATH; nvm's node/yarn must be named explicitly.
 Environment=PATH=/home/vilenarios/.nvm/versions/node/v22.20.0/bin:/usr/local/bin:/usr/bin:/bin
 
-ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/yarn capture
-
+# Invoked directly, NOT via `yarn <script>`. systemd signals the whole control
+# group, and yarn 1.x exits 1 when it is signalled — so every orderly stop was
+# recorded as status=1/FAILURE even though the daemon itself exited cleanly,
+# which buries real failures in the journal. One less process, and the unit's
+# exit status is now the daemon's own.
+ExecStart=/home/vilenarios/.nvm/versions/node/v22.20.0/bin/node --env-file-if-exists=.env --import tsx src/capture/daemon.ts
 # Capture missing an epoch is permanent data loss, so always come back.
 Restart=always
 RestartSec=15

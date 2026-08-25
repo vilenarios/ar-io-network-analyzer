@@ -137,6 +137,13 @@ paths:
         *net protocol inflow* until inflows can be attributed by source. Do the
         subtraction client-side.
 
+        Epoch 510 is the worked example. It shows +60,100,376.84 ARIO of
+        inflow, of which exactly 60,000,000 was a deliberate treasury deposit —
+        two transfers from one authority on 2026-08-11. On chain that is
+        indistinguishable from demand, and at roughly $66k it is 97% of the
+        USD total for the epochs published so far. Exclude or annotate it in
+        anything a human will read as earnings.
+
         **The earliest row has no predecessor**, so any delta derived from it is
         undefined — render it as null, never zero.
 
@@ -781,14 +788,26 @@ components:
               arioPriceUsd:
                 type: [number, 'null']
                 description: |
-                  Spot USD price. **Off-chain**, unlike every other field, and
-                  independently nullable. Multiply client-side; no
-                  USD-denominated field is published, so the seam between
+                  USD price of ARIO for this epoch. **Off-chain**, unlike every
+                  other field, and independently nullable. Multiply client-side;
+                  no USD-denominated field is published, so the seam between
                   on-chain and third-party data stays visible.
-                example: 0.00073145
+
+                  Value each epoch at ITS OWN price and sum. Converting a
+                  cumulative ARIO total at today's price is a different and
+                  usually wrong number — ARIO moved -65% across the first 16
+                  epochs of this series, which swings the answer by ~16%.
+                example: 0.00078441
               arioPriceSource:
+                description: >
+                  Which kind of price `arioPriceUsd` is, and where it came from.
+                  `coingecko:ar-io-network` is a spot reading taken at sample
+                  time; `coingecko:ar-io-network:daily-close` is the close of
+                  the day before the epoch ended, used for rows recovered by
+                  `economics:backfill`. Do not treat the two as interchangeable
+                  for intraday work.
                 type: [string, 'null']
-                example: coingecko:ar-io-network
+                example: coingecko:ar-io-network:daily-close
               arioPriceAt:
                 type: [integer, 'null']
                 description: When the SOURCE observed the price, unix ms — not when we fetched it.

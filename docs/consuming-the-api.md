@@ -121,15 +121,46 @@ curl -s https://network.services.ar.io/api/v1/economics.json \
            | [$s[$i].epochIndex, ($inflow / 1e6), $s[$i].arioPriceUsd] | @tsv'
 ```
 
+#### Putting it in USD
+
+Value **each epoch at its own price, then sum**. Do not convert a cumulative
+ARIO total at today's price — those are different questions, and here they give
+answers 16% apart, because ARIO moved −65% across these 16 epochs.
+
+```bash
+# operating inflow in ARIO and USD, excluding the epoch-510 treasury deposit
+curl -s https://network.services.ar.io/api/v1/economics.json \
+  | jq -r '.series as $s
+      | [ range(1; $s|length) as $i
+          | { epoch: $s[$i].epochIndex,
+              ario: (($s[$i].protocolBalance - $s[$i-1].protocolBalance
+                      + ($s[$i].totalEligibleRewards // 0)) / 1e6),
+              price: $s[$i].arioPriceUsd } ]
+      | map(select(.price != null))
+      | map(.usd = .ario * .price)
+      | { epochs: length,
+          ario: (map(.ario) | add),
+          usd:  (map(.usd)  | add) }'
+```
+
+As of epoch 523 that is **62,502,179.70 ARIO / $68,286.41** gross — but
+60,000,000 ARIO of it is a deliberate treasury deposit, not revenue (see
+below). Net of it: **2,502,179.70 ARIO / $2,337.41** across 15 epochs.
+
 **Four things that will burn you.**
 
 `totalEligibleRewards` is added, not subtracted: those rewards left the balance
 during the epoch, so adding them back recovers what came *in*.
 
-There is deliberately no `revenue` field. The balance moves for reasons that
-are not ArNS revenue — epoch 510 gained 60.07T mARIO in one step, which is a
-treasury movement, not demand. Label your derived figure *net protocol inflow*
-until inflows are attributable by source.
+There is deliberately no `revenue` field, and epoch 510 is the reason. It shows
++60,100,376.84 ARIO of "inflow", of which **exactly 60,000,000 ARIO was a
+deliberate treasury deposit** — two transfers from one authority on
+2026-08-11 (69,420 then 59,930,580). Nothing in this document distinguishes
+that from demand, because on-chain it is the same kind of movement.
+
+So: label your derived figure *net protocol inflow*, not revenue, until inflows
+are attributable by source — and exclude or annotate epoch 510 in any series a
+human will read as earnings. At ~$66k it is 97% of the window's gross USD.
 
 **The first row has no predecessor**, so its delta is undefined. Render null,
 never zero. And never assume `series[i+1].epochIndex == series[i].epochIndex+1`:
