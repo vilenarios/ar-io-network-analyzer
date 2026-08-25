@@ -423,8 +423,22 @@ export function toGatewayDocument(
   };
 }
 
-/** Findings are published verbatim; only the observer count is added. */
-export function toPublishedFinding(finding: Finding): PublishedFinding {
+/**
+ * Findings are published verbatim; only the observer count is added.
+ *
+ * `detectedAt` publishes `firstSeenAt` — when the finding was FIRST detected —
+ * not the `detected_at` column, which the detector re-stamps to `now` on every
+ * run. Those runs are hourly and re-evaluate every epoch in the window, so
+ * `detected_at` on a two-week-old epoch reads as "seconds ago", every hour,
+ * forever. Anyone asking "when did this collusion signal first appear?" got
+ * today's date for a signal twelve days old.
+ *
+ * It also made every epoch document churn: identical data, new timestamps, new
+ * bytes, new ETag, every hour — see `writeDocumentStable`.
+ */
+export function toPublishedFinding(
+  finding: Finding & { firstSeenAt?: number | string }
+): PublishedFinding {
   return {
     id: finding.id,
     kind: finding.kind,
@@ -433,8 +447,21 @@ export function toPublishedFinding(finding: Finding): PublishedFinding {
     observerCount: finding.observers.length,
     severity: finding.severity,
     confidence: finding.confidence,
-    detectedAt: finding.detectedAt,
+    detectedAt: firstSeenIso(finding) ?? finding.detectedAt,
     summary: finding.summary,
     detail: finding.detail,
   };
+}
+
+/** `firstSeenAt` is unix ms from the store, but may already be ISO. */
+function firstSeenIso(finding: { firstSeenAt?: number | string }): string | null {
+  const seen = finding.firstSeenAt;
+  if (typeof seen === 'number' && Number.isFinite(seen)) {
+    return new Date(seen).toISOString();
+  }
+  if (typeof seen === 'string' && seen) {
+    const parsed = Date.parse(seen);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+  }
+  return null;
 }
