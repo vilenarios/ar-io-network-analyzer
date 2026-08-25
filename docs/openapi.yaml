@@ -740,7 +740,15 @@ components:
             byKind: { type: object, additionalProperties: { type: integer } }
         economics:
           nullable: true
-          description: Always null today — defined in the contract but never populated.
+          description: |
+            Estimated reward concentration: `rewardPerGateway`,
+            `totalDistributedRewards`, `topCentralizedRewards`,
+            `topCentralizedPercentage` and a `rewardsByCluster` breakdown.
+
+            Derived from the epoch's `totalEligibleGatewayReward` multiplied by
+            cluster sizes — an estimate of what each same-actor cluster stands
+            to earn, not a record of what was paid. Null only if the epoch has
+            no eligible gateway reward.
         versions:
           nullable: true
           description: Gateway release-version distribution. Null if the run skipped performance probes.
