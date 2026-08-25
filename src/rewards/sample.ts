@@ -11,8 +11,8 @@
  * backfilled. A stake at a past epoch cannot: `DistributeEpoch` credits
  * positions in PDA state, and PDA state has no per-transaction history. Every
  * epoch that passes unsampled is lost permanently. That asymmetry is the whole
- * reason this exists, and it is why sampling runs on the cheap 10-minute
- * cadence rather than waiting for a tidier design.
+ * reason this exists, and it is why sampling piggybacks on the findings job
+ * rather than waiting for a tidier design.
  *
  * WHAT A ROW IS AND IS NOT. A row records the stake a position held shortly
  * after an epoch distributed. It is NOT anchored to the epoch boundary the way
@@ -93,7 +93,8 @@ export async function sampleStakePositions(
   const snapshot = await readSnapshot();
   if (!snapshot || snapshot.positions.length === 0) {
     // Skip rather than invent. These epochs stay pending and retry on the next
-    // 10-minute cycle, which is why a brief publisher outage costs nothing.
+    // findings cycle (hourly), which is why a brief publisher outage costs
+    // nothing: the epoch stays claimable for 24h.
     return { sampled: [], skipped: pending, positions: 0 };
   }
 

@@ -238,6 +238,12 @@ paths:
         be rendered as a zero — "scanned and empty" and "not looked at" are
         different facts.
 
+        **Freshness: hourly.** This document is written by the findings job
+        (`arns-observer-findings.timer`, hourly), NOT by the 10-minute portal
+        publisher. A newly distributed epoch therefore appears within an hour,
+        not within ten minutes. Settled epochs are byte-stable, so ETag/304
+        makes polling cheap regardless.
+
         **There is deliberately no APY field.** An annual rate from days of
         history is an extrapolation, and which extrapolation — simple or
         compounded, time-weighted or not, per position or per wallet — is a

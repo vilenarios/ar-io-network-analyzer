@@ -197,6 +197,10 @@ curl -s https://network.services.ar.io/api/v1/rewards.json \
           perEpoch: [ $e, (.rewards | map(if . == null then null else ./1e6 end)) ] | transpose }'
 ```
 
+**Freshness is hourly**, not 10-minutely: `rewards.json` and `economics.json`
+are written by the findings job, while the `portal/*` documents come from the
+10-minute publisher. A newly distributed epoch appears within the hour.
+
 **`basis` is the field to read first.** `events` means exact: decoded from the
 program's own `CompoundDelegationRewards` events, which name the delegate, the
 gateway and the amount. `inferred` means derived from stake movement, used for

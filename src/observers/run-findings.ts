@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * ENTRY POINT (b2) — the cheap cadence (every 10 minutes).
+ * ENTRY POINT (b2) — the cheap cadence (hourly; see
+ * `arns-observer-findings.timer`, OnUnitActiveSec=1h). Not to be confused with
+ * the portal publisher, which polls every 10 minutes and whose output this
+ * reads off disk.
  *
  * Pure recomputation: masked Hamming over a few dozen 81-byte prefixes plus a
  * join against the gateway roster the daily analysis already published. It
@@ -263,6 +266,10 @@ async function main(): Promise<void> {
     // Costs ZERO extra RPC — the positions are read from the portal snapshot
     // already on disk, not re-fetched. Querying the ~805 positions individually
     // would add real load to obtain numbers we already have.
+    //
+    // Runs hourly, so a sample lands within an hour of an epoch distributing
+    // rather than within ten minutes. Well inside the 24h claim window, and
+    // the offset is visible in `sampled_at`.
     //
     // Unlike the economics sample this cannot be backfilled: stake credits land
     // in PDA state, which has no per-transaction history. A missed epoch is
