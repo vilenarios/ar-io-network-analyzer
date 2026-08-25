@@ -215,3 +215,40 @@ test('an empty series is a valid document, not an error', () => {
   assert.deepEqual(doc.series, []);
   assert.equal(doc.schemaVersion, '1.0');
 });
+
+test('a live sample is anchored to the epoch boundary, not to when the job ran', async () => {
+  const handle = db();
+  addEpoch(handle, 523, 2 * HOUR);
+  const boundaryMs = Math.floor((NOW - 2 * HOUR) / 1000) * 1000;
+
+  await sampleEconomics(handle, async () => inputs(9_999), {
+    now: NOW,
+    fetchPrice: noPrice,
+    readBoundaryBalance: async () => ({ balance: 1_000, slot: 441_147_592, endMs: boundaryMs }),
+  });
+
+  const [row] = listEconomicsSamples(handle);
+  // The balance at the boundary, NOT the current one the summary reports.
+  // Epoch 523's first row was written 15.4h late and absorbed 35,725 ARIO of
+  // the next epoch as a result; that is what this prevents.
+  assert.equal(row.protocolBalance, 1_000);
+  assert.equal(row.slot, 441_147_592);
+  assert.equal(row.sampledAt, boundaryMs);
+  handle.close();
+});
+
+test('a failed boundary recovery keeps the row and says so via sampledAt', async () => {
+  const handle = db();
+  addEpoch(handle, 523, 2 * HOUR);
+
+  await sampleEconomics(handle, async () => inputs(9_999), {
+    now: NOW,
+    fetchPrice: noPrice,
+    readBoundaryBalance: async () => null,
+  });
+
+  const [row] = listEconomicsSamples(handle);
+  assert.equal(row.protocolBalance, 9_999, 'losing the epoch would be worse than a drifted anchor');
+  assert.equal(row.sampledAt, NOW, 'sampledAt reveals which anchor was used');
+  handle.close();
+});

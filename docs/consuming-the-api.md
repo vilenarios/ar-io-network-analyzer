@@ -104,6 +104,48 @@ infrastructure detectors run degraded and produce roughly a quarter of the
 findings. If `byKind` has no `shared_ip` or `analyzer_cluster_overlap`
 entries, the daily analysis has not run.
 
+### `economics.json` — the protocol balance over time
+
+One row per completed epoch, oldest first. This exists because
+`protocolBalance` used to be recomputed every cycle and immediately discarded:
+only one sample ever existed, so no delta could be taken and protocol revenue
+was not derivable at any point in time. Nothing new is measured — the missing
+capability was retention.
+
+```bash
+# net protocol inflow per epoch, in ARIO, with the USD price of that day
+curl -s https://network.services.ar.io/api/v1/economics.json \
+  | jq -r '.series as $s | range(1; $s|length) as $i
+           | ($s[$i].protocolBalance - $s[$i-1].protocolBalance
+              + ($s[$i].totalEligibleRewards // 0)) as $inflow
+           | [$s[$i].epochIndex, ($inflow / 1e6), $s[$i].arioPriceUsd] | @tsv'
+```
+
+**Four things that will burn you.**
+
+`totalEligibleRewards` is added, not subtracted: those rewards left the balance
+during the epoch, so adding them back recovers what came *in*.
+
+There is deliberately no `revenue` field. The balance moves for reasons that
+are not ArNS revenue — epoch 510 gained 60.07T mARIO in one step, which is a
+treasury movement, not demand. Label your derived figure *net protocol inflow*
+until inflows are attributable by source.
+
+**The first row has no predecessor**, so its delta is undefined. Render null,
+never zero. And never assume `series[i+1].epochIndex == series[i].epochIndex+1`:
+an epoch whose balance could not be read is omitted permanently rather than
+interpolated, so gaps are real and must be drawn as gaps.
+
+**Only `protocolBalance` is guaranteed non-null.** Rows recovered from chain
+history carry `null` for `demandFactor`, `circulating`, `staked`, `delegated`
+and `arnsRecordCount` — that state is not in transaction metadata and is not
+worth inventing. `arioPriceUsd` is independently nullable and carries its own
+provenance in `arioPriceSource`, which distinguishes a spot reading from a
+daily close.
+
+Every row is anchored to its epoch boundary (`endTimestamp`, with `slot`
+pinning the exact read), so consecutive rows really are one epoch apart.
+
 ### `epochs/<n>.json` — the irreplaceable one
 
 Per-epoch observation reports: `observer`, `reportTxId`, `submittedAt`,

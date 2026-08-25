@@ -128,6 +128,7 @@ measured as having no discriminating power. See
 | `yarn observers:findings` | Recompute findings for the rolling window and publish. |
 | `yarn observers:backfill` | Same, over every captured epoch. |
 | `yarn observers:calibrate` | Measure the similarity distribution; `--activate <id>` promotes a row. |
+| `yarn economics:backfill` | Recover past epochs of `economics.json` from chain history. Dry run by default; `--apply` to write. See [operations §5.6](./docs/operations.md). |
 | `yarn serve` | Read-only HTTP server over `public/`. |
 | `yarn db:migrate` / `yarn db:stats` | Apply migrations / print table counts. |
 | `yarn test` | Unit tests (`node:test`). No network access. |

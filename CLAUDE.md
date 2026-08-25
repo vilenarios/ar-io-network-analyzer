@@ -30,6 +30,7 @@ Network Centralization Analyzers for the Arweave ecosystem:
 - `yarn observers:findings` - Recompute + publish findings (never touches the network)
 - `yarn observers:backfill` - Same, over every captured epoch
 - `yarn observers:calibrate [--activate <id> [--force]]` - Measure / promote the similarity threshold
+- `yarn economics:backfill [--apply] [--reanchor]` - One-shot recovery of past economics rows from chain history; dry run unless `--apply`. Never put this on a timer.
 - `yarn serve` - Read-only HTTP server over `public/`
 - `yarn portal` / `yarn portal:once` / `yarn portal:status` - Portal snapshot publisher (see `docs/portal-api.md`)
 - `yarn portal:loadtest` - Capacity harness; not part of `yarn test`

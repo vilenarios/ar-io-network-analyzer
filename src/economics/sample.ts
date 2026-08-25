@@ -31,11 +31,17 @@
  *
  * 3. Sample at a defined point, not "whenever the job ran". The balance moves
  *    continuously, so a row is only comparable to its neighbours if every row
- *    is taken at the same moment in the epoch lifecycle. That moment is after
- *    `distribute_epoch` — `epochs.rewards_distributed = 1` — at which point the
- *    epoch's rewards have left the protocol balance. The observed slot is
- *    recorded alongside so a consumer can see the actual interval rather than
- *    assuming one.
+ *    is taken at the same moment in the epoch lifecycle. That moment is the
+ *    epoch boundary, once `epochs.rewards_distributed = 1` confirms the epoch's
+ *    rewards have left the protocol balance.
+ *
+ *    "Whenever the job ran" is NOT that point, and the difference is not
+ *    academic: the first row ever written landed 15.4 hours after its boundary
+ *    and so absorbed 15.4 hours of the next epoch's activity — 35,725 ARIO.
+ *    `readBoundaryBalance` resolves the balance AT the boundary from
+ *    transaction metadata, which is exact, reproducible, and yields the same
+ *    answer an hour or a year later. That last property is what lets rows
+ *    written live and rows recovered afterwards belong to one series.
  *
  * 4. Components, not conclusions. `protocolBalance` and `totalEligibleRewards`
  *    are published; the subtraction is the consumer's. There is deliberately no
@@ -76,6 +82,11 @@ export interface SampleResult {
   skipped: number[];
 }
 
+/** Resolves the protocol balance as it stood at an epoch's boundary. */
+export type BoundaryBalanceReader = (
+  epochIndex: number
+) => Promise<{ balance: number; slot: number; endMs: number } | null>;
+
 /**
  * Write a sample for every distributed-but-unsampled epoch.
  *
@@ -90,7 +101,11 @@ export interface SampleResult {
 export async function sampleEconomics(
   db: Database,
   readInputs: () => Promise<EconomicsInputs | null>,
-  options: { now?: number; fetchPrice?: typeof fetchArioPriceUsd } = {}
+  options: {
+    now?: number;
+    fetchPrice?: typeof fetchArioPriceUsd;
+    readBoundaryBalance?: BoundaryBalanceReader;
+  } = {}
 ): Promise<SampleResult> {
   const pending = epochsAwaitingEconomicsSample(db, options.now ?? Date.now());
   if (pending.length === 0) return { sampled: [], skipped: [] };
@@ -116,14 +131,29 @@ export async function sampleEconomics(
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
 
+  // Rule 3: prefer the balance AT the boundary over the balance now. Resolved
+  // per epoch before the write, because it is async and the write is not.
+  const boundaries = new Map<number, { balance: number; slot: number; endMs: number }>();
+  if (options.readBoundaryBalance) {
+    for (const epochIndex of pending) {
+      const boundary = await options.readBoundaryBalance(epochIndex);
+      if (boundary) boundaries.set(epochIndex, boundary);
+    }
+  }
+
   const sampled: number[] = [];
   const write = db.transaction((epochIndexes: number[]) => {
     for (const epochIndex of epochIndexes) {
+      // No boundary means the recovery failed (RPC down, or history pruned).
+      // Falling back to the current balance keeps the row rather than losing
+      // the epoch, and stays honest: `sampled_at` then holds the sampling time
+      // instead of the boundary, so a consumer can see which anchor was used.
+      const boundary = boundaries.get(epochIndex);
       insert.run(
         epochIndex,
-        now,
-        inputs.slot ?? null,
-        inputs.protocolBalance,
+        boundary?.endMs ?? now,
+        boundary?.slot ?? inputs.slot ?? null,
+        boundary?.balance ?? inputs.protocolBalance,
         epochTotalEligibleRewards(db, epochIndex),
         inputs.demandFactor,
         inputs.circulating,

@@ -54,7 +54,14 @@ temp/
 *.temp
 # Observation capture database (irreplaceable — back it up, do not commit)
 # Anchored: an unanchored `data/` would also swallow src/data/.
-/data/
+# `/data/*`, not `/data/`: git cannot re-include a file whose parent directory
+# is excluded, so the exception below only works against the contents.
+/data/*
+# ...except checked-in reference data. The ARIO price history is verified,
+# hand-aligned input to `economics:backfill`, not generated output — it belongs
+# in review, and re-fetching it would silently reintroduce the one-day offset
+# its header documents.
+!/data/ario-price-daily.csv
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

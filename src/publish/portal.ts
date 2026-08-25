@@ -185,7 +185,7 @@ export function publishPortalDocuments(
  * Returns null when nothing has ever been published — there is no manifest to
  * annotate, and inventing one would claim documents that do not exist.
  */
-export function markPortalPublishFailure(now: Date = new Date()): PortalManifest | null {
+export function markPortalPublishFailure(_now: Date = new Date()): PortalManifest | null {
   const previous = readPortalManifest();
   if (!previous) return null;
 

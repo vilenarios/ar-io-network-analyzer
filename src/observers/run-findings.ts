@@ -24,6 +24,7 @@ import {
 import { buildEconomicsDocument } from '../economics/document.js';
 import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
 import { sampleEconomics } from '../economics/sample.js';
+import { createBalanceReader } from '../economics/solana-balance.js';
 import { publicDir } from '../publish/publish.js';
 import {
   DETECTOR_VERSION,
@@ -216,11 +217,23 @@ async function main(): Promise<void> {
     // be taken across it. Guarded: a failure here must never cost the findings
     // publish, which is the job this process actually exists to do.
     try {
-      const result = await sampleEconomics(db, async () => {
-        // `observedAt` rides along on the inputs, so the row records when the
-        // balance was true rather than when this job ran.
-        return readEconomicsInputsFromSummary(publicDir());
-      });
+      // Anchored to the epoch boundary, not to now — see rule 3 in sample.ts.
+      // Costs a handful of RPC calls once per epoch (roughly once a day), not
+      // per cycle: the reader caches signatures for the life of the process and
+      // is only consulted when an epoch is actually pending.
+      const balanceReader = createBalanceReader();
+      const result = await sampleEconomics(
+        db,
+        async () => readEconomicsInputsFromSummary(publicDir()),
+        {
+          readBoundaryBalance: async (epochIndex) => {
+            const endSeconds = epochEndTimestampSeconds(db, epochIndex);
+            if (endSeconds === null) return null;
+            const boundary = await balanceReader.balanceAtBoundary(endSeconds);
+            return boundary ? { ...boundary, endMs: endSeconds * 1000 } : null;
+          },
+        }
+      );
       if (result.sampled.length > 0) {
         console.log(`💰 economics: sampled epoch(s) ${result.sampled.join(', ')}`);
       }

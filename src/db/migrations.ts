@@ -305,6 +305,34 @@ export const MIGRATIONS: Migration[] = [
          ario_price_at          INTEGER
        )`,
     ],
+  },
+  {
+    version: 6,
+    name: 'ario-daily-price',
+    statements: [
+      // Daily ARIO close price, keyed by UTC date.
+      //
+      // Separate from `economics_samples` because it is a different KIND of
+      // fact: off-chain, third-party, and reusable beyond the economics series
+      // (denominating historical ArNS registrations needs the same table).
+      //
+      // `close_date` is the day the price CLOSED, which is not the same as the
+      // day CoinGecko's `/history?date=D` reports it under: that endpoint
+      // returns the 00:00 snapshot of D, which is the close of D-1. Storing
+      // the close date rather than the query date keeps the ambiguity out of
+      // every consumer. An epoch ending on date D at 00:04 UTC therefore takes
+      // the row for D-1.
+      //
+      // Verified against the live API on two dates before any data was loaded:
+      // the alignment is real, and a one-row error is worth up to 23% on a
+      // single day of this series.
+      `CREATE TABLE IF NOT EXISTS ario_price_daily (
+         close_date TEXT PRIMARY KEY,
+         price_usd  REAL NOT NULL,
+         source     TEXT NOT NULL,
+         loaded_at  INTEGER NOT NULL
+       )`,
+    ],
   }
 
 ];

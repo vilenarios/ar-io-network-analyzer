@@ -147,13 +147,33 @@ paths:
         point silently corrupts every delta that spans it. Never assume
         `series[i+1].epochIndex === series[i].epochIndex + 1`.
 
-        **The series starts empty and grows forward.** Epochs that completed
-        before the first capture never appear, because the balance they had at
-        the time is unrecoverable. An empty `series` is a valid document.
+        **Every row is anchored to its epoch boundary**, not to when the
+        publisher happened to sample. `endTimestamp` is that boundary and `slot`
+        is the exact slot the balance was read at, so consecutive rows are
+        always one epoch apart and their difference means what it looks like.
+        (Anchoring matters: the very first row written was sampled 15.4 hours
+        late and absorbed 35,725 ARIO of the following epoch before this was
+        corrected.)
+
+        **History can be recovered, and some of this series was.** The balance
+        at any past boundary is recoverable from Solana transaction metadata —
+        `postTokenBalances` on the last transaction that changed the protocol
+        account before that moment — so the operator command
+        `yarn economics:backfill` can extend the series backwards. Recovered
+        rows are measurements, not estimates, and were validated against the
+        live pipeline's independent SDK reading at the same instant (exact
+        match). What is *not* recoverable is the PDA state of that moment, so
+        **recovered rows carry `null` for `demandFactor`, `circulating`,
+        `staked`, `delegated` and `arnsRecordCount`** rather than borrowing
+        today's values. Treat those fields as independently nullable on every
+        row; only `protocolBalance` is guaranteed.
 
         `arioPriceUsd` is the only off-chain field, is independently nullable,
         and carries its own provenance (`arioPriceSource`, `arioPriceAt`) — a
-        price outage costs the price, never the on-chain row.
+        price outage costs the price, never the on-chain row. `arioPriceSource`
+        distinguishes a spot reading (`coingecko:ar-io-network`) from a daily
+        close (`coingecko:ar-io-network:daily-close`); do not treat the two as
+        interchangeable for intraday work.
       responses:
         '200':
           description: The retained series.
@@ -199,7 +219,8 @@ paths:
         empty and `totals.highCentralization` collapses to 0 if the analysis
         ran with `SKIP_GEO=1` — geography carries 25% of the centralization
         score. A report with `uniqueAsns: 0` is a degraded run, not a
-        decentralized network. `economics` is currently always `null`.
+        decentralized network. `economics` is an estimate — per-gateway reward
+        times cluster size — not a record of payments.
       responses:
         '200':
           description: Network centralization summary.
@@ -776,7 +797,8 @@ components:
       type: object
       required: [schemaVersion, generatedAt, totals]
       description: |
-        Daily centralization analysis. `economics` is currently always null.
+        Daily centralization analysis. `economics` estimates reward
+        concentration; it is not a record of payments.
       properties:
         schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
         generatedAt:
