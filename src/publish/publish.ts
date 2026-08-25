@@ -129,6 +129,67 @@ export function publishOpenApiSpec(): DocumentEntry | null {
   };
 }
 
+/**
+ * Write a document only if its content actually changed, ignoring the
+ * `generatedAt` stamp.
+ *
+ * Epoch documents describe a settled past: once an epoch distributes, its
+ * observation PDAs are closed on chain and the data can never change. But the
+ * findings job re-evaluates the whole window hourly and re-stamped
+ * `generatedAt` every time, so every epoch document got new bytes, a new
+ * sha256 and a new ETag every hour while saying exactly the same thing.
+ *
+ * That cost real things: consumers re-downloaded immutable history hourly
+ * instead of revalidating with a 304, and any content-addressed archive (an
+ * Arweave path manifest, say) would re-upload the entire back catalogue daily
+ * because nothing ever looked unchanged.
+ *
+ * When the content matches, this leaves the file completely alone — same
+ * bytes, same mtime — and returns the entry describing what is already on
+ * disk, carrying the ORIGINAL `generatedAt`. nginx derives its ETag from
+ * mtime+size, so not touching the file is what makes revalidation work.
+ */
+export function writeDocumentStable(
+  relativePath: string,
+  value: unknown,
+  generatedAt: string
+): DocumentEntry {
+  const target = join(publicDir(), relativePath);
+
+  if (existsSync(target)) {
+    try {
+      const existing = readFileSync(target, 'utf8');
+      if (sameIgnoringGeneratedAt(existing, value)) {
+        const previous = JSON.parse(existing) as { generatedAt?: unknown };
+        return {
+          path: `/${relativePath}`,
+          sha256: sha256(existing),
+          bytes: Buffer.byteLength(existing),
+          generatedAt:
+            typeof previous.generatedAt === 'string' ? previous.generatedAt : generatedAt,
+        };
+      }
+    } catch {
+      // Unreadable or unparseable on disk: fall through and rewrite it.
+    }
+  }
+
+  return writeDocument(relativePath, value, generatedAt);
+}
+
+/** Compare two documents with the `generatedAt` stamp normalised away. */
+function sameIgnoringGeneratedAt(existingJson: string, candidate: unknown): boolean {
+  try {
+    const a = JSON.parse(existingJson) as Record<string, unknown>;
+    const b = JSON.parse(JSON.stringify(candidate)) as Record<string, unknown>;
+    delete a.generatedAt;
+    delete b.generatedAt;
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 export function writeAtomic(relativePath: string, content: string | Buffer): void {
   const target = join(publicDir(), relativePath);
   const scratch = join(tmpDir(), relativePath);
@@ -373,7 +434,7 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
         (documents.epochs ?? []).map((entry) => [entry.epochIndex, entry])
       );
       for (const { epochIndex, doc } of input.epochDocs) {
-        const entry = writeDocument(`api/v1/epochs/${epochIndex}.json`, doc, generatedAt);
+        const entry = writeDocumentStable(`api/v1/epochs/${epochIndex}.json`, doc, generatedAt);
         byIndex.set(epochIndex, { ...entry, epochIndex });
       }
       documents.epochs = [...byIndex.values()].sort((a, b) => b.epochIndex - a.epochIndex);

@@ -16,6 +16,7 @@ import {
   activeCalibration,
   getObservationsForEpochs,
   listEpochs,
+  listFindings,
   upsertFindings,
 } from '../db/repo-read.js';
 import {
@@ -182,12 +183,35 @@ async function main(): Promise<void> {
       true
     );
 
+    // Re-attach `firstSeenAt` from the store before publishing.
+    //
+    // The findings above are freshly detected, so each carries
+    // `detectedAt = now` — this run's clock. The store is what remembers when
+    // a finding was FIRST seen, and `upsertFindings` preserves that across
+    // runs. Publishing the in-memory objects therefore stamped every finding
+    // with "now" on every hourly run, including findings about epochs that
+    // settled weeks ago.
+    //
+    // Wrong twice over: `detectedAt` claimed a two-week-old signal was
+    // detected seconds ago, and the churn gave every epoch document new bytes
+    // hourly even though its data can never change.
+    const storedById = new Map(
+      listFindings(db, { epochIndexes: epochs.map((e) => e.epochIndex) }).map((stored) => [
+        stored.id,
+        stored.firstSeenAt,
+      ])
+    );
+    const publishable = findings.map((finding) => {
+      const firstSeenAt = storedById.get(finding.id);
+      return firstSeenAt === undefined ? finding : { ...finding, firstSeenAt };
+    });
+
     await publishDocuments({
-      observers: buildObserversDocument(epochs, findings, roster.gateways),
-      findings: buildFindingsDocument(findings, epochs, config),
+      observers: buildObserversDocument(epochs, publishable, roster.gateways),
+      findings: buildFindingsDocument(publishable, epochs, config),
       epochDocs: epochs.map((epoch) => ({
         epochIndex: epoch.epochIndex,
-        doc: buildEpochDocument(epoch, findings),
+        doc: buildEpochDocument(epoch, publishable),
       })),
       lock: 'skip',
     });
