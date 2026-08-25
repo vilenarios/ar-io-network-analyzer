@@ -739,11 +739,88 @@ components:
             bySeverity: { type: object, additionalProperties: { type: integer } }
             byKind: { type: object, additionalProperties: { type: integer } }
         economics:
-          nullable: true
-          description: Always null today — defined in the contract but never populated.
+          description: |
+            Estimated reward concentration for the current epoch. `null` only
+            when the epoch has no eligible gateway reward.
+          oneOf:
+            - $ref: '#/components/schemas/Economics'
+            - type: 'null'
         versions:
           nullable: true
           description: Gateway release-version distribution. Null if the run skipped performance probes.
+
+    Economics:
+      type: object
+      required:
+        - rewardPerGateway
+        - totalDistributedRewards
+        - topCentralizedRewards
+        - topCentralizedPercentage
+        - rewardsByCluster
+      description: |
+        Estimated reward concentration across same-actor clusters.
+
+        **This is an estimate, not a payment record.** Every figure derives from
+        the epoch's `totalEligibleGatewayReward` multiplied by gateway counts —
+        it answers "what does this cluster stand to earn if every member is
+        paid the per-gateway reward", not "what was actually distributed".
+        Nothing here is reconciled against on-chain transfers.
+
+        All ARIO amounts are in **mARIO** (6 decimals), as on chain. Divide by
+        1e6 at the display boundary.
+      properties:
+        rewardPerGateway:
+          type: integer
+          description: |
+            The epoch's `totalEligibleGatewayReward`, in mARIO — what a single
+            eligible gateway stands to earn. Every other figure is derived from
+            this.
+          example: 108898765275
+        totalDistributedRewards:
+          type: integer
+          description: |
+            `rewardPerGateway` × the number of analysed gateways, in mARIO.
+            Named "distributed" for historical reasons — it is the estimated
+            pool, not a settled total.
+          example: 34412009827900
+        topCentralizedRewards:
+          type: integer
+          description: Sum of `rewardsByCluster[].clusterRewards`, in mARIO.
+          example: 26353501200000
+        topCentralizedPercentage:
+          type: number
+          format: double
+          description: |
+            `topCentralizedRewards` as a percentage of
+            `totalDistributedRewards` — the headline concentration figure: how
+            much of the reward pool flows to gateways that cluster together as
+            one apparent actor.
+          example: 76.58
+        rewardsByCluster:
+          type: array
+          description: |
+            Per-cluster breakdown, sorted by `clusterRewards` descending, with
+            zero-reward clusters omitted. Join `clusterId` against
+            `NetworkSummary.clusters[].id` for the member gateways and wallets.
+          items:
+            type: object
+            required: [clusterId, clusterRewards, gatewayCount, percentageOfTotal]
+            properties:
+              clusterId:
+                type: string
+                description: Matches `NetworkSummary.clusters[].id`.
+                example: domain-3
+              clusterRewards:
+                type: integer
+                description: mARIO this cluster stands to earn.
+                example: 3266962958250
+              gatewayCount:
+                type: integer
+                example: 30
+              percentageOfTotal:
+                type: number
+                format: double
+                example: 9.49
 
     PortalProgramIds:
       type: object

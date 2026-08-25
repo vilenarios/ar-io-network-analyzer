@@ -68,14 +68,37 @@ export class GatewayCentralizationAnalyzer {
         console.log('💰 Fetching reward distribution data...');
         this.distributionData = await fetchDistributions();
         if (this.distributionData) {
-          // Check if it's a direct wallet mapping
-          if (!this.distributionData.rewards && typeof this.distributionData === 'object') {
-            // Might be direct wallet->reward mapping, wrap it
-            const walletRewards = { ...this.distributionData } as Record<string, number>;
-            const total = Object.values(walletRewards).reduce((sum: number, reward) => sum + (typeof reward === 'number' ? reward : 0), 0);
+          // Some backends return a bare wallet->reward map instead of the
+          // summary shape. Normalise that into `rewards` — but NEVER by
+          // replacing the object. The Solana SDK returns only summary scalars
+          // (totalEligibleGateways / totalEligibleRewards /
+          // totalEligibleObserverReward / totalEligibleGatewayReward) and no
+          // per-wallet map at all. The previous version spread those four
+          // scalars in as if they were wallets, then reassigned
+          // `distributionData` to `{ rewards, totalDistributedRewards }` —
+          // dropping `totalEligibleGatewayReward`, the ONLY field the economic
+          // calculation reads. That is why `economics` published as null on
+          // every run even though the fetch succeeded.
+          const raw = this.distributionData as Record<string, unknown>;
+          const SUMMARY_FIELDS = new Set([
+            'rewards',
+            'totalEligibleGateways',
+            'totalEligibleRewards',
+            'totalEligibleObserverReward',
+            'totalEligibleGatewayReward',
+            'totalDistributedRewards',
+          ]);
+          const walletEntries = Object.entries(raw).filter(
+            ([key, value]) => !SUMMARY_FIELDS.has(key) && typeof value === 'number'
+          ) as [string, number][];
+
+          if (!raw.rewards && walletEntries.length > 0) {
             this.distributionData = {
-              rewards: walletRewards,
-              totalDistributedRewards: total
+              ...this.distributionData,
+              rewards: Object.fromEntries(walletEntries),
+              totalDistributedRewards:
+                this.distributionData.totalDistributedRewards ??
+                walletEntries.reduce((sum, [, reward]) => sum + reward, 0),
             };
           }
           
@@ -960,7 +983,11 @@ export class GatewayCentralizationAnalyzer {
 
     // Calculate economic impact if distribution data is available
     let economicImpact = undefined;
-    if (this.distributionData && this.distributionData.rewards) {
+    // Gate on what the calculation actually consumes: it reads
+    // `totalEligibleGatewayReward` and the cluster sizes, and never touches
+    // `rewards`. Requiring a per-wallet map here meant the Solana SDK's
+    // summary-only response skipped economics entirely.
+    if (this.distributionData?.totalEligibleGatewayReward) {
       economicImpact = this.calculateEconomicImpact(clusterSummaries);
     }
 

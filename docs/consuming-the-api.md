@@ -71,8 +71,10 @@ infrastructure block will be empty and `totals.highCentralization` will read
 `0` because geography carries 25% of the score. **That is a degraded run, not a
 decentralized network.** Check `uniqueAsns` before believing a low score.
 
-`economics` is always `null` today. `versions` is null if the run skipped
-performance probes.
+`economics` carries estimated reward concentration — `rewardPerGateway`,
+`topCentralizedRewards`, `topCentralizedPercentage` and a per-cluster
+breakdown. It is an **estimate** (per-gateway reward × cluster size), not a
+record of payments. `versions` is null if the run skipped performance probes.
 
 ### `gateways.json` — per-gateway detail
 
