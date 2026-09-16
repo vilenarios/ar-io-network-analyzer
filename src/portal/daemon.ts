@@ -19,6 +19,7 @@
  */
 
 import { fetchPortalSnapshot } from './fetch.js';
+import { primaryNameJoinFailure } from './primary-names.js';
 import { markPortalPublishFailure, publishPortalDocuments, readPortalManifest } from '../publish/portal.js';
 import { assertNodeVersion, scrubSecrets } from '../utils/runtime.js';
 import { cleanupScratchTree, publicDir } from '../publish/publish.js';
@@ -60,6 +61,14 @@ export async function runCycle(): Promise<CycleResult> {
       };
     }
 
+    // The primary-name join resolves `processId` from the ArNS sweep rather
+    // than from the wire, so a join that stops matching is the failure mode
+    // this service now owns. See primaryNameJoinFailure.
+    const joinFailure = primaryNameJoinFailure(snapshot.primaryNameScan);
+    if (joinFailure) {
+      return { ok: false, error: `refusing to publish: ${joinFailure}` };
+    }
+
     publishPortalDocuments(snapshot);
 
     return {
@@ -70,6 +79,11 @@ export async function runCycle(): Promise<CycleResult> {
         balances: snapshot.balances.length,
         delegates: snapshot.delegates.length,
         arnsRecords: snapshot.arnsRecordCount,
+        primaryNames: snapshot.primaryNames.length,
+        // Skips are forgiven but never silent: a join that starts dropping
+        // rows shows up here a cycle before anyone notices the document.
+        primaryNamesOrphaned: snapshot.primaryNameScan.orphaned,
+        primaryNamesMalformed: snapshot.primaryNameScan.malformed,
       },
     };
   } catch (error) {

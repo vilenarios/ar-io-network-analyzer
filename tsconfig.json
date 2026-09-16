@@ -1,4 +1,5 @@
 {
+  "//paths": "moduleResolution 'node' predates export maps, so tsc cannot see @ar.io/solana-contracts' './core' subpath. Node resolves it correctly at runtime; `paths` points the typechecker at the same file. Remove once moduleResolution moves to node16/bundler.",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ES2022",
@@ -14,7 +15,11 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ar.io/solana-contracts/core": ["node_modules/@ar.io/solana-contracts/lib/core/index.d.ts"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

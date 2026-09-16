@@ -12,6 +12,11 @@
  */
 
 import { initSolanaArio } from '../data/gateway-fetcher.js';
+import {
+  fetchPrimaryNames,
+  type ProgramAccountScanner,
+  type PrimaryNameScan,
+} from './primary-names.js';
 import { resolvePortalNetwork, type PortalNetwork, type PortalProgramIds } from './contract.js';
 
 /** One call per document; the SDK paginates in memory, so this is one sweep each. */
@@ -39,6 +44,12 @@ export interface PortalSnapshot {
    */
   withdrawals: unknown[];
   primaryNames: unknown[];
+  /**
+   * How the primary-name join went. Carried so a join that silently
+   * stops matching surfaces as a number rather than as a document that
+   * quietly got smaller — see ./primary-names.ts.
+   */
+  primaryNameScan: PrimaryNameScan;
   arnsRecords: unknown[];
   arnsRecordCount: number;
   tokenSupply: unknown;
@@ -58,13 +69,16 @@ function items(result: Paged | undefined): unknown[] {
 /**
  * Fetch everything the portal would otherwise scan for itself.
  *
- * Reads run sequentially rather than with `Promise.all`. Five concurrent
- * whole-program scans is exactly the burst an endpoint rate-limits, and the
+ * Reads run sequentially rather than with `Promise.all`. Concurrent
+ * whole-program scans are exactly the burst an endpoint rate-limits, and the
  * whole set completes in under a second anyway — there is nothing to win and a
  * 429 to lose.
+ *
+ * Order is load-bearing in one place: the ArNS sweep must precede the primary
+ * names, which are joined against it instead of re-read per name.
  */
 export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
-  const { ario, host, programIds } = await initSolanaArio();
+  const { ario, rpc, host, programIds } = await initSolanaArio();
 
   // An operator can state the network explicitly; otherwise it is inferred
   // from the host, which for most providers encodes it. Neither working is a
@@ -77,7 +91,6 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   const balances = items((await ario.getBalances(FULL_SCAN)) as Paged);
   const delegates = items((await ario.getAllDelegates(FULL_SCAN)) as Paged);
   const withdrawals = items((await ario.getAllGatewayVaults(FULL_SCAN)) as Paged);
-  const primaryNames = items((await ario.getPrimaryNames(FULL_SCAN)) as Paged);
 
   // Ask for every record rather than `{ limit: 1 }`. It costs the same: the
   // SDK scans the whole ArNS program and deserializes every account before
@@ -85,6 +98,17 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   // the query. Taking the items keeps the work instead of discarding it.
   const arnsRecords = items((await ario.getArNSRecords(FULL_SCAN)) as Paged);
   const arnsRecordCount = arnsRecords.length;
+
+  // Not `ario.getPrimaryNames()`: that attaches `processId` with one
+  // `getAccountInfo` per name, which measured as ~81% of this service's RPC
+  // bill. The sweep above already carries every `processId`, so the join is
+  // local and the scan costs what it always did.
+  const primaryNameScan = await fetchPrimaryNames(
+    rpc as unknown as ProgramAccountScanner,
+    programIds.core,
+    arnsRecords,
+  );
+  const primaryNames = primaryNameScan.items;
 
   const tokenSupply = await ario.getTokenSupply();
   const demandFactor = await readDemandFactor(ario);
@@ -100,6 +124,7 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
     delegates,
     withdrawals,
     primaryNames,
+    primaryNameScan,
     arnsRecords,
     arnsRecordCount,
     tokenSupply,

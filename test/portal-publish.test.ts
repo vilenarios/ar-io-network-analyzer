@@ -44,7 +44,14 @@ function snapshot(overrides: Partial<PortalSnapshot> = {}): PortalSnapshot {
     withdrawals: [
       { cursorId: 'wd-1', vaultId: '1', balance: 5, gatewayAddress: 'gw-1' },
     ],
-    primaryNames: [{ name: 'alice', address: 'wallet-1' }],
+    primaryNames: [{ name: 'alice', address: 'wallet-1', processId: 'ant-1' }],
+    // Mirrors `primaryNames`: in a real cycle they are the same array.
+    primaryNameScan: {
+      items: [{ name: 'alice', address: 'wallet-1', processId: 'ant-1' }],
+      scanned: 1,
+      orphaned: 0,
+      malformed: 0,
+    },
     arnsRecords: [{ name: 'alice', processId: 'ant-1' }],
     arnsRecordCount: 2981,
     tokenSupply: { total: 1_000_000, circulating: 500_000 },
