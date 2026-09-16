@@ -33,8 +33,10 @@ test('baseNameOf lowercases, matching the PDA seed the SDK derives', () => {
   assert.equal(baseNameOf('Sub_Alice'), 'alice');
 });
 
-test('baseNameOf treats only the two-part form as an undername', () => {
-  // Three parts is not `sub_base`; the SDK resolves it through parts[0].
+test('baseNameOf reproduces the SDK rule for 2+ underscores, bug included', () => {
+  // The contract says `a_b_c` is undername `a` of base `b_c`; the SDK's rule
+  // returns `a`. We mirror the SDK, not the contract, so this stays a pure
+  // performance change — see the note on baseNameOf and ar-io/ar-io-sdk#733.
   assert.equal(baseNameOf('a_b_c'), 'a');
 });
 

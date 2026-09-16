@@ -59,11 +59,20 @@ export interface PrimaryNameScan {
  * The SDK's join key: an undername (`sub_name`) resolves through its base
  * name, anything else through itself.
  *
- * Kept byte-identical to `getPrimaryNames`' own `baseNameOf` — it decides
- * which ArNS record a name resolves to, so a divergence here silently
- * repoints rows rather than failing. `split('_')` with a length check, not a
- * `startsWith`, because a name may legitimately contain further underscores
- * and only the two-part form is an undername.
+ * Kept byte-identical to `getPrimaryNames`' own `baseNameOf`, because this key
+ * decides which ArNS record a name resolves to and a divergence would silently
+ * repoint rows rather than fail.
+ *
+ * NOTE that the SDK rule it mirrors is WRONG, and deliberately reproduced
+ * anyway. The contract splits on the FIRST underscore (`splitn(2, '_')`), so
+ * `a_b_c` is undername `a` of base `b_c`; this `parts.length === 2` check
+ * returns `a` instead, and such a name silently fails its lookup. Fixed
+ * upstream in ar-io/ar-io-sdk#733 via the shared `splitPrimaryName` helper.
+ * Reproducing it here keeps this change a pure performance change with
+ * bit-identical output — no name on mainnet or devnet carries two underscores
+ * today, so nothing is affected either way. When the SDK fix ships and this
+ * repo bumps `@ar.io/sdk`, the parity test (PORTAL_SDK_PARITY=1) will start
+ * failing: adopt the corrected rule then, do not loosen the test.
  */
 export function baseNameOf(name: string): string {
   const parts = name.toLowerCase().split('_');
