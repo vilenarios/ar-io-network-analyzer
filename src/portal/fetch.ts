@@ -12,7 +12,11 @@
  */
 
 import { initSolanaArio } from '../data/gateway-fetcher.js';
-import { fetchPrimaryNames, type DiscriminatorScanner, type PrimaryNameScan } from './primary-names.js';
+import {
+  fetchPrimaryNames,
+  type ProgramAccountScanner,
+  type PrimaryNameScan,
+} from './primary-names.js';
 import { resolvePortalNetwork, type PortalNetwork, type PortalProgramIds } from './contract.js';
 
 /** One call per document; the SDK paginates in memory, so this is one sweep each. */
@@ -74,7 +78,7 @@ function items(result: Paged | undefined): unknown[] {
  * names, which are joined against it instead of re-read per name.
  */
 export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
-  const { ario, host, programIds } = await initSolanaArio();
+  const { ario, rpc, host, programIds } = await initSolanaArio();
 
   // An operator can state the network explicitly; otherwise it is inferred
   // from the host, which for most providers encodes it. Neither working is a
@@ -100,7 +104,8 @@ export async function fetchPortalSnapshot(): Promise<PortalSnapshot> {
   // bill. The sweep above already carries every `processId`, so the join is
   // local and the scan costs what it always did.
   const primaryNameScan = await fetchPrimaryNames(
-    ario as unknown as DiscriminatorScanner,
+    rpc as unknown as ProgramAccountScanner,
+    programIds.core,
     arnsRecords,
   );
   const primaryNames = primaryNameScan.items;

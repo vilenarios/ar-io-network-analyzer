@@ -8,6 +8,7 @@
  */
 
 import test from 'node:test';
+import { PRIMARY_NAME_DISCRIMINATOR } from '@ar.io/solana-contracts/core';
 import assert from 'node:assert/strict';
 import {
   baseNameOf,
@@ -98,19 +99,35 @@ test('an empty ArNS sweep orphans everything rather than throwing', () => {
   assert.equal(orphaned, 1);
 });
 
+/** Records a single getProgramAccounts scan and replays `accounts` from it. */
+function scanningRpc(
+  accounts: Buffer[],
+  calls: { programId: string; filters: unknown[] }[],
+) {
+  return {
+    getProgramAccounts(
+      programId: string,
+      config: { filters: unknown[] },
+    ) {
+      calls.push({ programId, filters: config.filters });
+      return {
+        send: async () =>
+          accounts.map((data) => ({
+            account: { data: [data.toString('base64'), 'base64'] as const },
+          })),
+      };
+    },
+  };
+}
+
 test('fetchPrimaryNames issues exactly one scan and forgives what will not decode', async () => {
   // The whole point of the change: one `getProgramAccounts`, no per-name read.
-  const calls: { programId: unknown }[] = [];
+  const calls: { programId: string; filters: unknown[] }[] = [];
+  // Two accounts carrying the discriminator, neither a decodable PrimaryName —
+  // the SDK skips these and so do we.
   const scan = await fetchPrimaryNames(
-    {
-      coreProgram: 'core-program',
-      async getAccountsByDiscriminator(programId: unknown) {
-        calls.push({ programId });
-        // Two accounts carrying the discriminator, neither a decodable
-        // PrimaryName — the SDK skips these and so do we.
-        return [{ data: Buffer.alloc(4) }, { data: Buffer.alloc(8) }];
-      },
-    },
+    scanningRpc([Buffer.alloc(4), Buffer.alloc(8)], calls),
+    'core-program',
     records,
   );
 
@@ -119,6 +136,25 @@ test('fetchPrimaryNames issues exactly one scan and forgives what will not decod
   assert.equal(scan.scanned, 2);
   // Every scanned account is accounted for: joined, orphaned, or malformed.
   assert.equal(scan.items.length + scan.orphaned + scan.malformed, scan.scanned);
+});
+
+test('fetchPrimaryNames filters the scan on the primary-name discriminator', async () => {
+  // Without the memcmp the scan would stream back every core-program account,
+  // which is both wrong and enormous.
+  const calls: { programId: string; filters: unknown[] }[] = [];
+  await fetchPrimaryNames(scanningRpc([], calls), 'core-program', records);
+
+  assert.equal(calls[0].filters.length, 1);
+  const { memcmp } = calls[0].filters[0] as {
+    memcmp: { offset: bigint; bytes: string; encoding: string };
+  };
+  assert.equal(memcmp.offset, 0n, 'discriminator sits at offset 0');
+  assert.equal(memcmp.encoding, 'base64');
+  assert.equal(
+    memcmp.bytes,
+    Buffer.from(PRIMARY_NAME_DISCRIMINATOR).toString('base64'),
+    'must be the PrimaryName discriminator, not another account type',
+  );
 });
 
 /**
@@ -133,13 +169,13 @@ test(
   { skip: process.env.PORTAL_SDK_PARITY ? false : 'set PORTAL_SDK_PARITY=1 to run' },
   async () => {
     const { initSolanaArio } = await import('../src/data/gateway-fetcher.js');
-    const { ario } = await initSolanaArio();
+    const { ario, rpc, programIds } = await initSolanaArio();
     const FULL_SCAN = { limit: Number.MAX_SAFE_INTEGER } as const;
 
     const paged = (r: unknown) => ((r as { items?: unknown[] }).items ?? []);
     const arnsRecords = paged(await ario.getArNSRecords(FULL_SCAN));
 
-    const mine = await fetchPrimaryNames(ario as never, arnsRecords);
+    const mine = await fetchPrimaryNames(rpc as never, programIds.core, arnsRecords);
     const theirs = paged(await ario.getPrimaryNames(FULL_SCAN));
 
     // Compare as sets of field-sorted rows: the SDK returns scan order, which

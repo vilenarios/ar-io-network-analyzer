@@ -132,37 +132,72 @@ export function primaryNameJoinFailure(scan: PrimaryNameScan): string | null {
   );
 }
 
-/** The one method this module needs from the SDK client. */
-export interface DiscriminatorScanner {
-  coreProgram: unknown;
-  getAccountsByDiscriminator(
-    // `ArrayLike<number>`, because the contracts package exports the
-    // discriminator as a ReadonlyUint8Array and the SDK only ever does
-    // `Buffer.from(...)` with it.
-    programId: unknown,
-    discriminator: ArrayLike<number>,
-  ): Promise<readonly { data: Buffer }[]>;
+/**
+ * The slice of `@solana/kit`'s RPC this module needs.
+ *
+ * Structural rather than the concrete kit type so the scan is testable with a
+ * stub, and so this module does not pin a kit version of its own.
+ */
+export interface ProgramAccountScanner {
+  getProgramAccounts(
+    programId: string,
+    config: {
+      encoding: 'base64';
+      filters: { memcmp: { offset: bigint; bytes: string; encoding: 'base64' } }[];
+    },
+  ): { send(): Promise<readonly { account: { data: readonly [string, string] } }[]> };
 }
 
+/** Retry policy, matching the capture path's (see src/capture/rpc.ts). */
+const PORTAL_RETRY_OPTIONS = { maxAttempts: 5, baseDelayMs: 1000, maxDelayMs: 30000 };
+
 /**
- * Scan the core program for primary names and join them against `arnsRecords`.
+ * Scan the core program for primary-name accounts and join them against
+ * `arnsRecords`.
  *
  * Costs exactly one `getProgramAccounts` — the same scan `getPrimaryNames()`
  * opens with, and then the whole of what it does afterwards.
+ *
+ * The scan is issued against the RPC directly rather than through the SDK's
+ * `getAccountsByDiscriminator`, which is `private` (as is `coreProgram`,
+ * which is `protected`). Reaching past those would compile — TypeScript's
+ * `private` is erased — but nothing would check the call still exists, and a
+ * move to `#private` would break it at runtime with no warning. `rpc` and
+ * `programIds.core` are already returned by `initSolanaArio()` as public
+ * values, so this uses those and keeps the typechecker honest. Retries follow
+ * the same `withRetry` pattern as src/capture/rpc.ts.
  */
 export async function fetchPrimaryNames(
-  ario: DiscriminatorScanner,
+  rpc: ProgramAccountScanner,
+  coreProgramId: string,
   arnsRecords: readonly unknown[],
 ): Promise<PrimaryNameScan> {
-  const accounts = await ario.getAccountsByDiscriminator(
-    ario.coreProgram,
-    PRIMARY_NAME_DISCRIMINATOR,
+  const { withRetry } = await import('@ar.io/sdk');
+
+  const accounts = await withRetry(
+    () =>
+      rpc
+        .getProgramAccounts(coreProgramId, {
+          encoding: 'base64',
+          filters: [
+            {
+              memcmp: {
+                offset: 0n,
+                bytes: Buffer.from(PRIMARY_NAME_DISCRIMINATOR).toString('base64'),
+                encoding: 'base64',
+              },
+            },
+          ],
+        })
+        .send(),
+    PORTAL_RETRY_OPTIONS,
   );
 
   const primaryNames: PrimaryNameLike[] = [];
   let malformed = 0;
-  for (const { data } of accounts) {
+  for (const entry of accounts) {
     try {
+      const data = Buffer.from(entry.account.data[0], 'base64');
       primaryNames.push(deserializePrimaryName(data) as PrimaryNameLike);
     } catch {
       // Same forgiveness the SDK applies: an account that carries the
