@@ -26,6 +26,7 @@ import {
   latestStakePerPosition,
   listFindings,
   upsertFindings,
+  listChainEpochs,
 } from '../db/repo-read.js';
 import { buildEconomicsDocument } from '../economics/document.js';
 import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
@@ -44,7 +45,7 @@ import {
   GATEWAY_DEPENDENT_KINDS,
   WINDOW_DETECTORS,
 } from './detectors/index.js';
-import { buildEpochDocument, buildFindingsDocument, buildObserversDocument } from './documents.js';
+import { buildUnobservedEpochDocument, buildEpochDocument, buildFindingsDocument, buildObserversDocument } from './documents.js';
 import { capSeverity, makeFinding } from './finding.js';
 import { publishDocuments } from '../publish/publish.js';
 import { loadGatewayRoster } from './roster.js';
@@ -155,6 +156,26 @@ async function main(): Promise<void> {
       db,
       selected.map((e) => e.epochIndex)
     );
+
+    // Chain-side facts for every captured epoch. Two uses: annotating each
+    // observed document with how complete it is (epoch 520 publishes 16
+    // observations where the chain counted 18, and nothing said so), and
+    // finding the epochs that have no observation rows at all.
+    const chainEpochs = listChainEpochs(db);
+    const observedIndexes = new Set(known.map((e) => e.epochIndex));
+    // Every captured epoch with no observation rows, regardless of the feed
+    // window. Not windowed, for two reasons: the set is tiny and static (five
+    // epochs across the whole history), and `writeDocumentStable` leaves a file
+    // untouched when the content is unchanged, so republishing them on an
+    // hourly run costs no bytes, no mtime change and no ETag churn.
+    //
+    // This deliberately includes the `missing` ones (508/509: the chain counted
+    // 10 and 8 submissions we never captured). We hold their Epoch accounts, so
+    // a 404 would be wrong — the document says reports existed and are gone,
+    // which is the fact a consumer needs.
+    const unobservedEpochs = [...chainEpochs.values()]
+      .filter((chain) => !observedIndexes.has(chain.epochIndex))
+      .sort((a, b) => a.epochIndex - b.epochIndex);
 
     const roster = loadGatewayRoster();
     const now = Date.now();
@@ -340,10 +361,20 @@ async function main(): Promise<void> {
         new Date().toISOString(),
         deriveOperatorRewards(db)
       ),
-      epochDocs: epochs.map((epoch) => ({
-        epochIndex: epoch.epochIndex,
-        doc: buildEpochDocument(epoch, publishable),
-      })),
+      epochDocs: [
+        ...epochs.map((epoch) => ({
+          epochIndex: epoch.epochIndex,
+          doc: buildEpochDocument(epoch, publishable, chainEpochs.get(epoch.epochIndex) ?? null),
+        })),
+        // Epochs the chain knows about but that produced no observations we
+        // hold. Without these the document is simply absent and the route
+        // 404s, which reads identically to "wrong URL" or "publisher bug" —
+        // see buildUnobservedEpochDocument.
+        ...unobservedEpochs.map((chain) => ({
+          epochIndex: chain.epochIndex,
+          doc: buildUnobservedEpochDocument(chain, publishable),
+        })),
+      ],
       lock: 'skip',
     });
 

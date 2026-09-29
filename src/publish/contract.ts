@@ -24,7 +24,12 @@ import type {
   Severity,
 } from '../observers/types.js';
 
-export const SCHEMA_VERSION = '1.0';
+// 1.1 adds `capture` + `chain` to every epoch document, and makes
+// `first/lastSubmittedAtUnix` nullable so an epoch nobody reported in can be
+// published at all. Additive: 1.0 readers keep every field they had, and the
+// two timestamps were never meaningful for an empty list because it could not
+// previously exist.
+export const SCHEMA_VERSION = '1.1';
 
 /** The bitmap encoding published documents advertise but never interpret. */
 export const GATEWAY_RESULTS_ENCODING = 'gar-bitmap-v1-lsb';
@@ -214,8 +219,38 @@ export interface EpochDocument {
   registryCaptured: boolean;
   registryApproximate: boolean;
   registryDigest: string | null;
-  firstSubmittedAtUnix: number;
-  lastSubmittedAtUnix: number;
+  /**
+   * null when `observations` is empty — there is no first or last submission
+   * to report. Always a number when the array is non-empty.
+   */
+  firstSubmittedAtUnix: number | null;
+  lastSubmittedAtUnix: number | null;
+  /**
+   * Whether `observations` is the whole truth for this epoch, judged against
+   * the chain's own tally. Read this BEFORE computing participation rates:
+   *
+   *   complete — we hold everything the chain counted (including 0 of 0)
+   *   partial  — we hold some but fewer than the chain counted
+   *   missing  — the chain counted submissions and we hold none
+   *   unknown  — no chain-side count captured, so completeness is unknowable
+   *
+   * An empty array with `complete` means nobody reported. An empty array with
+   * `missing` means reports existed and are gone — `close_epoch` is
+   * permissionless and reclaims the account, so they are unrecoverable.
+   * See ../observers/capture-state.ts.
+   */
+  capture: 'complete' | 'partial' | 'missing' | 'unknown';
+  /**
+   * The chain's own account fields, when captured. `null` for epochs whose
+   * Epoch account we never read. This is what lets a consumer verify `capture`
+   * rather than trust it.
+   */
+  chain: {
+    observerCount: number | null;
+    observationsSubmitted: number | null;
+    activeGatewayCount: number | null;
+    hasObservedCount: number | null;
+  } | null;
   observations: Array<{
     observer: string;
     pubkey: string;

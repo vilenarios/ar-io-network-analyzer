@@ -370,6 +370,10 @@ paths:
       description: |
         Every captured observation for a single epoch plus its findings. This is
         the durable address for findings that have aged out of the feed window.
+
+        Returns 200 with an empty `observations` array for a captured epoch in
+        which nobody reported; check `capture` to tell that apart from an epoch
+        whose observations were never captured.
       parameters:
         - name: epochIndex
           in: path
@@ -388,9 +392,14 @@ paths:
         '304': { $ref: '#/components/responses/NotModified' }
         '404':
           description: |
-            No document for that epoch. Either it predates capture, or capture
-            was not running when it closed — on-chain observations are
-            unrecoverable once closed.
+            No Epoch account was ever captured for that index — it is outside
+            the captured range, or has not happened yet.
+
+            An epoch that WAS captured but produced no observations is **not** a
+            404: it returns 200 with an empty `observations` array and a
+            `capture` value saying why. That distinction is the point — a 404
+            used to cover "nobody reported", "we lost the data", "no such
+            epoch" and "publisher bug" alike.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1435,8 +1444,47 @@ components:
             Without it the results bitmap cannot later be mapped to gateways.
         registryApproximate: { type: boolean }
         registryDigest: { type: [string, 'null'] }
-        firstSubmittedAtUnix: { type: [integer, 'null'] }
+        firstSubmittedAtUnix:
+          type: [integer, 'null']
+          description: null when `observations` is empty.
         lastSubmittedAtUnix: { type: [integer, 'null'] }
+        capture:
+          type: string
+          enum: [complete, partial, missing, unknown]
+          description: |
+            Whether `observations` is the whole truth for this epoch, judged
+            against the chain's own `observations_submitted` tally. **Read this
+            before computing participation rates.**
+
+            - `complete` — we hold everything the chain counted, including 0 of 0
+            - `partial` — we hold some, but fewer than the chain counted
+            - `missing` — the chain counted submissions and we hold none
+            - `unknown` — no chain-side count captured; completeness unknowable
+
+            An empty `observations` array with `complete` means nobody reported
+            that epoch. An empty array with `missing` means reports existed and
+            are gone: `close_epoch` is permissionless and reclaims the Epoch
+            account, so they are unrecoverable.
+        chain:
+          type: [object, 'null']
+          description: |
+            The chain's own Epoch account fields, so a consumer can verify
+            `capture` rather than trust it. null for epochs whose Epoch account
+            was never captured.
+          properties:
+            observerCount:
+              type: [integer, 'null']
+              description: Prescribed observers for the epoch (50 on mainnet today).
+            observationsSubmitted:
+              type: [integer, 'null']
+              description: The protocol's own tally of submitted observations.
+            activeGatewayCount: { type: [integer, 'null'] }
+            hasObservedCount:
+              type: [integer, 'null']
+              description: |
+                Observers the chain's `has_observed` bitmap marks as having
+                reported. Zero alongside `observationsSubmitted: 0` is the
+                protocol stating plainly that nobody reported.
         observations:
           type: array
           items: { $ref: '#/components/schemas/Observation' }
