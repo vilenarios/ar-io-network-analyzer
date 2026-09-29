@@ -15,6 +15,8 @@ import {
   type FindingsDocument,
   type ObserversDocument,
 } from '../publish/contract.js';
+import { captureState } from './capture-state.js';
+import type { ChainEpochFacts } from '../db/repo-read.js';
 import { meaningfulBytes } from './hamming.js';
 import { countFindings, rankFindings, summarizeObservers } from './rollup.js';
 import type { DetectorConfig, EpochSnapshot, Finding, GatewayFacts } from './types.js';
@@ -28,7 +30,11 @@ function epochRange(epochs: EpochSnapshot[]) {
   };
 }
 
-export function buildEpochDocument(epoch: EpochSnapshot, findings: Finding[]): EpochDocument {
+export function buildEpochDocument(
+  epoch: EpochSnapshot,
+  findings: Finding[],
+  chain: ChainEpochFacts | null = null
+): EpochDocument {
   return {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
@@ -40,6 +46,8 @@ export function buildEpochDocument(epoch: EpochSnapshot, findings: Finding[]): E
     registryDigest: epoch.registry?.digest ?? null,
     firstSubmittedAtUnix: epoch.firstSubmittedAtUnix,
     lastSubmittedAtUnix: epoch.lastSubmittedAtUnix,
+    capture: captureState(epoch.observations.length, chain?.observationsSubmitted ?? null),
+    chain: toPublishedChain(chain),
     observations: epoch.observations.map((observation) => ({
       observer: observation.observer,
       pubkey: observation.pubkey,
@@ -61,6 +69,56 @@ export function buildEpochDocument(epoch: EpochSnapshot, findings: Finding[]): E
     })),
     findings: findings
       .filter((finding) => finding.epochIndex === epoch.epochIndex)
+      .map(toPublishedFinding),
+  };
+}
+
+/** Project chain facts into the document shape, dropping the redundant index. */
+function toPublishedChain(chain: ChainEpochFacts | null): EpochDocument['chain'] {
+  if (!chain) return null;
+  return {
+    observerCount: chain.observerCount,
+    observationsSubmitted: chain.observationsSubmitted,
+    activeGatewayCount: chain.activeGatewayCount,
+    hasObservedCount: chain.hasObservedCount,
+  };
+}
+
+/**
+ * An epoch document for an epoch with no captured observations.
+ *
+ * `getEpoch()` returns null for these — and must keep doing so, because it
+ * feeds the findings detectors and computes `Math.min(...submitted)`, which is
+ * `Infinity` on an empty array. So this builds the document from chain facts
+ * directly instead of routing an empty snapshot through that path.
+ *
+ * `capture` is what makes the result honest: `complete` for an epoch the chain
+ * agrees was silent, `missing` for one whose reports we simply never captured.
+ * Findings are still attached — a finding can be about the epoch itself rather
+ * than about any individual observation.
+ */
+export function buildUnobservedEpochDocument(
+  chain: ChainEpochFacts,
+  findings: Finding[]
+): EpochDocument {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    epochIndex: chain.epochIndex,
+    observationCount: 0,
+    distinctReportTxIds: 0,
+    // No observations means no bitmaps to decode, so registry provenance is
+    // moot; reported as absent rather than guessed at.
+    registryCaptured: false,
+    registryApproximate: false,
+    registryDigest: null,
+    firstSubmittedAtUnix: null,
+    lastSubmittedAtUnix: null,
+    capture: captureState(0, chain.observationsSubmitted),
+    chain: toPublishedChain(chain),
+    observations: [],
+    findings: findings
+      .filter((finding) => finding.epochIndex === chain.epochIndex)
       .map(toPublishedFinding),
   };
 }

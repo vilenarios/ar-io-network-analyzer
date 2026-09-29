@@ -63,6 +63,83 @@ function toObservation(row: ObservationRow): ObservationRecord {
   };
 }
 
+/**
+ * What the chain's own Epoch account said, for epochs we captured metadata for.
+ *
+ * Read straight from the `epochs` table, which capture writes every cycle even
+ * when an epoch yields no observations. That is what makes an empty epoch
+ * document meaningful rather than merely empty — see ../observers/capture-state.ts.
+ */
+export interface ChainEpochFacts {
+  epochIndex: number;
+  /** Prescribed observers for the epoch (50 on mainnet today). */
+  observerCount: number | null;
+  /** The protocol's own tally of submitted observations. */
+  observationsSubmitted: number | null;
+  activeGatewayCount: number | null;
+  /**
+   * How many prescribed observers the chain's `has_observed` bitmap marks as
+   * having reported. An all-zero bitmap alongside `observationsSubmitted: 0` is
+   * the protocol stating plainly that nobody reported.
+   */
+  hasObservedCount: number | null;
+}
+
+/** Count set bits in the 7-byte LSB-first `has_observed` bitmap. */
+function countSetBits(blob: Buffer | null): number | null {
+  if (!blob) return null;
+  let bits = 0;
+  for (const byte of blob) {
+    let b = byte;
+    while (b) {
+      bits += b & 1;
+      b >>= 1;
+    }
+  }
+  return bits;
+}
+
+/**
+ * Chain-side facts for every epoch whose Epoch account we have captured,
+ * keyed by epoch index.
+ *
+ * Deliberately reads the `epochs` table rather than `observations`: an epoch
+ * nobody reported in has no observation rows at all, so joining from
+ * observations is exactly how such epochs became invisible.
+ */
+export function listChainEpochs(db: Database): Map<number, ChainEpochFacts> {
+  const rows = db
+    .prepare<
+      [],
+      {
+        epoch_index: number;
+        observer_count: number | null;
+        observations_submitted: number | null;
+        active_gateway_count: number | null;
+        has_observed: Buffer | null;
+      }
+    >(
+      `SELECT epoch_index, observer_count, observations_submitted,
+              active_gateway_count, has_observed
+         FROM epochs
+        ORDER BY epoch_index ASC`
+    )
+    .all();
+
+  return new Map(
+    rows.map((r) => [
+      r.epoch_index,
+      {
+        epochIndex: r.epoch_index,
+        observerCount: r.observer_count,
+        observationsSubmitted: r.observations_submitted,
+        activeGatewayCount: r.active_gateway_count,
+        hasObservedCount: countSetBits(r.has_observed),
+      },
+    ])
+  );
+}
+
 export interface EpochListEntry {
   epochIndex: number;
   observationCount: number;
