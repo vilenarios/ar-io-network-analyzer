@@ -72,6 +72,8 @@ function toObservation(row: ObservationRow): ObservationRecord {
  */
 export interface ChainEpochFacts {
   epochIndex: number;
+  /** Epoch end, unix seconds. Decides whether completeness is knowable yet. */
+  endTimestamp: number | null;
   /** Prescribed observers for the epoch (50 on mainnet today). */
   observerCount: number | null;
   /** The protocol's own tally of submitted observations. */
@@ -113,13 +115,14 @@ export function listChainEpochs(db: Database): Map<number, ChainEpochFacts> {
       [],
       {
         epoch_index: number;
+        end_timestamp: number | null;
         observer_count: number | null;
         observations_submitted: number | null;
         active_gateway_count: number | null;
         has_observed: Buffer | null;
       }
     >(
-      `SELECT epoch_index, observer_count, observations_submitted,
+      `SELECT epoch_index, end_timestamp, observer_count, observations_submitted,
               active_gateway_count, has_observed
          FROM epochs
         ORDER BY epoch_index ASC`
@@ -131,6 +134,7 @@ export function listChainEpochs(db: Database): Map<number, ChainEpochFacts> {
       r.epoch_index,
       {
         epochIndex: r.epoch_index,
+        endTimestamp: r.end_timestamp,
         observerCount: r.observer_count,
         observationsSubmitted: r.observations_submitted,
         activeGatewayCount: r.active_gateway_count,

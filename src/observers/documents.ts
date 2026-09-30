@@ -15,7 +15,7 @@ import {
   type FindingsDocument,
   type ObserversDocument,
 } from '../publish/contract.js';
-import { captureState } from './capture-state.js';
+import { captureState, isWindowClosed } from './capture-state.js';
 import type { ChainEpochFacts } from '../db/repo-read.js';
 import { meaningfulBytes } from './hamming.js';
 import { countFindings, rankFindings, summarizeObservers } from './rollup.js';
@@ -46,7 +46,11 @@ export function buildEpochDocument(
     registryDigest: epoch.registry?.digest ?? null,
     firstSubmittedAtUnix: epoch.firstSubmittedAtUnix,
     lastSubmittedAtUnix: epoch.lastSubmittedAtUnix,
-    capture: captureState(epoch.observations.length, chain?.observationsSubmitted ?? null),
+    capture: captureState(
+      epoch.observations.length,
+      chain?.observationsSubmitted ?? null,
+      isWindowClosed(chain?.endTimestamp ?? null)
+    ),
     chain: toPublishedChain(chain),
     observations: epoch.observations.map((observation) => ({
       observer: observation.observer,
@@ -77,6 +81,9 @@ export function buildEpochDocument(
 function toPublishedChain(chain: ChainEpochFacts | null): EpochDocument['chain'] {
   if (!chain) return null;
   return {
+    // Published so a consumer can tell `capture: "unknown"` because the epoch
+    // is still running apart from `unknown` because no tally was captured.
+    endTimestampUnix: chain.endTimestamp,
     observerCount: chain.observerCount,
     observationsSubmitted: chain.observationsSubmitted,
     activeGatewayCount: chain.activeGatewayCount,
@@ -93,7 +100,9 @@ function toPublishedChain(chain: ChainEpochFacts | null): EpochDocument['chain']
  * directly instead of routing an empty snapshot through that path.
  *
  * `capture` is what makes the result honest: `complete` for an epoch the chain
- * agrees was silent, `missing` for one whose reports we simply never captured.
+ * agrees was silent, `missing` for one whose reports we simply never captured,
+ * and `unknown` while the epoch is still running — every epoch begins with zero
+ * observations, so a live one must not be published as having been ignored.
  * Findings are still attached — a finding can be about the epoch itself rather
  * than about any individual observation.
  */
@@ -114,7 +123,11 @@ export function buildUnobservedEpochDocument(
     registryDigest: null,
     firstSubmittedAtUnix: null,
     lastSubmittedAtUnix: null,
-    capture: captureState(0, chain.observationsSubmitted),
+    capture: captureState(
+      0,
+      chain.observationsSubmitted,
+      isWindowClosed(chain.endTimestamp)
+    ),
     chain: toPublishedChain(chain),
     observations: [],
     findings: findings

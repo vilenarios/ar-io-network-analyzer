@@ -232,7 +232,12 @@ export interface EpochDocument {
    *   complete — we hold everything the chain counted (including 0 of 0)
    *   partial  — we hold some but fewer than the chain counted
    *   missing  — the chain counted submissions and we hold none
-   *   unknown  — no chain-side count captured, so completeness is unknowable
+   *   unknown  — completeness is not knowable: either no chain-side count was
+   *              captured, or the epoch is STILL RUNNING. The current epoch is
+   *              always `unknown` — it starts with zero observations because
+   *              nobody has reported yet, which must not be published as
+   *              "nobody reported". Compare `chain.endTimestampUnix` to tell
+   *              the two apart.
    *
    * An empty array with `complete` means nobody reported. An empty array with
    * `missing` means reports existed and are gone — `close_epoch` is
@@ -246,6 +251,8 @@ export interface EpochDocument {
    * rather than trust it.
    */
   chain: {
+    /** Epoch end, unix seconds. In the future means the window is still open. */
+    endTimestampUnix: number | null;
     observerCount: number | null;
     observationsSubmitted: number | null;
     activeGatewayCount: number | null;
