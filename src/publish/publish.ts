@@ -36,6 +36,7 @@ import {
   SCHEMA_VERSION,
   type DocumentEntry,
   type EpochDocument,
+  type RegistryDocument,
   type FindingsDocument,
   type GatewaysDocument,
   type Manifest,
@@ -76,6 +77,7 @@ export interface PublishInput {
    */
   rewards?: RewardsDocument;
   epochDocs?: Array<{ epochIndex: number; doc: EpochDocument }>;
+  registryDocs?: Array<{ epochIndex: number; doc: RegistryDocument }>;
   homepage?: { html: string; csv: string; summaryJson: string; date: string };
   archiveDate?: string;
   /**
@@ -542,6 +544,20 @@ export async function publishDocuments(input: PublishInput): Promise<void> {
         byIndex.set(epochIndex, { ...entry, epochIndex });
       }
       documents.epochs = [...byIndex.values()].sort((a, b) => b.epochIndex - a.epochIndex);
+    }
+
+    if (input.registryDocs && input.registryDocs.length > 0) {
+      const byIndex = new Map<number, DocumentEntry & { epochIndex: number }>(
+        (documents.registry ?? []).map((entry) => [entry.epochIndex, entry])
+      );
+      for (const { epochIndex, doc } of input.registryDocs) {
+        // Stable: a closed epoch's slot order never changes again, so the file
+        // must stop being rewritten once written or every consumer
+        // re-downloads immutable history hourly.
+        const entry = writeDocumentStable(`api/v1/registry/${epochIndex}.json`, doc, generatedAt);
+        byIndex.set(epochIndex, { ...entry, epochIndex });
+      }
+      documents.registry = [...byIndex.values()].sort((a, b) => b.epochIndex - a.epochIndex);
     }
 
     if (input.homepage) {

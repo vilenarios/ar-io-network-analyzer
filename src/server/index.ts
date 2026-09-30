@@ -330,6 +330,14 @@ export function routeToFile(pathname: string): string | null {
     return EPOCH_PATTERN.test(epochMatch[1]) ? `api/v1/epochs/${epochMatch[1]}.json` : null;
   }
 
+  // Same shape and the same EPOCH_PATTERN gate as the epoch documents: the
+  // registry slot order is addressed per epoch and is what makes an
+  // observation's verdict bitmap resolvable to gateway addresses.
+  const registryMatch = /^\/api\/v1\/registry\/([^/]+)\.json$/.exec(pathname);
+  if (registryMatch) {
+    return EPOCH_PATTERN.test(registryMatch[1]) ? `api/v1/registry/${registryMatch[1]}.json` : null;
+  }
+
   const archiveMatch = /^\/archive\/([^/]+)\/(.*)$/.exec(pathname);
   if (archiveMatch) {
     if (!DATE_PATTERN.test(archiveMatch[1])) return null;
