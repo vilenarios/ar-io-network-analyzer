@@ -107,6 +107,8 @@ export function readFile(
 export function cacheControlFor(requestPath: string): string {
   if (requestPath.endsWith('/index.json')) return 'public, max-age=30';
   if (requestPath.startsWith('/api/v1/epochs/')) return 'public, max-age=300';
+  // A closed epoch's slot order never changes again — see RegistryDocument.
+  if (requestPath.startsWith('/api/v1/registry/')) return 'public, max-age=300';
   if (requestPath.startsWith('/api/v1/')) return 'public, max-age=60';
   if (requestPath.startsWith('/archive/')) return 'public, max-age=86400, immutable';
   return 'public, max-age=60';

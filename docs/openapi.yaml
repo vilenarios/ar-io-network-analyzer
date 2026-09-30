@@ -405,6 +405,68 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
 
 
+  /api/v1/registry/{epochIndex}.json:
+    get:
+      operationId: getEpochRegistry
+      tags: [Epochs]
+      summary: One epoch's gateway registry slot order
+      description: |
+        **The key to every observation's verdict bitmap.**
+
+        An observation's `gatewayResultsBase64` is a bitmap indexed by gateway
+        registry SLOT, not by gateway address. Without this document a consumer
+        can count how many gateways an observer failed but cannot name one of
+        them, and cannot ask the reverse question ("which observers failed
+        gateway X in epoch N") at all.
+
+        `gateways[i]` is the gateway at bit `i`. To decode, base64-decode the
+        observation's `gatewayResultsBase64`, then for slot `i`:
+
+            bit    = (blob[i >> 3] >> (i & 7)) & 1
+            passed = bit === 1
+            failed = bit === 0
+
+        **Mind the polarity.** A SET bit means the observer found the gateway
+        HEALTHY; the FAILURE is the cleared bit. Inverting this reports every
+        passing gateway as failing. Cross-check against the epoch's chain-side
+        `failure_counts` if you want to prove your decoder: the number of
+        observers with bit `i` CLEARED matches the protocol's own failure tally
+        for slot `i`.
+
+        Only the first `gatewayResultsMeaningfulBytes` of the blob carry
+        verdicts; the rest is padding, and padding bits are zero — which under
+        this polarity would read as failures, so never decode past that length.
+
+        **Check `inEpoch` before trusting it.** A snapshot taken after the epoch
+        closed is the CURRENT slot order wearing a past epoch's label — any
+        gateway that joined or left since shifts every slot after it, so bit `i`
+        may not name `gateways[i]`. Those epochs report `approximate: true`.
+      parameters:
+        - name: epochIndex
+          in: path
+          required: true
+          description: AR.IO epoch index.
+          schema: { type: integer, minimum: 0, examples: [559] }
+      responses:
+        '200':
+          description: The slot order.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Cache-Control: { $ref: '#/components/headers/CacheControl' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistryDocument' }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '404':
+          description: |
+            No registry snapshot was captured for that epoch. Its bitmaps are
+            not decodable and never will be — the slot order is only
+            recoverable while the epoch is live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+
   /api/v1/portal/index.json:
     get:
       operationId: getPortalManifest
@@ -1505,6 +1567,45 @@ components:
           type: array
           description: All findings for this epoch, including any aged out of the feed.
           items: { $ref: '#/components/schemas/Finding' }
+
+    RegistryDocument:
+      type: object
+      required: [schemaVersion, generatedAt, epochIndex, inEpoch, gateways]
+      properties:
+        schemaVersion: { $ref: '#/components/schemas/SchemaVersion' }
+        generatedAt: { type: string, format: date-time }
+        epochIndex: { type: integer }
+        gatewayCount:
+          type: integer
+          description: Gateways in the registry when the order was captured.
+        inEpoch:
+          type: boolean
+          description: |
+            Captured while this epoch was live — the only kind whose slot order
+            reliably matches the epoch's bitmaps.
+        approximate:
+          type: boolean
+          description: |
+            The inverse of `inEpoch`. true means bit `i` may not name
+            `gateways[i]`; do not attribute verdicts to gateways.
+        digest:
+          type: string
+          description: |
+            Matches `registryDigest` on the same epoch's document, so the pair
+            can be verified against each other.
+        capturedAtUnix: { type: integer }
+        capturedAtSlot: { type: integer }
+        registryPubkey:
+          type: string
+          description: The registry account the order was read from.
+        encoding:
+          type: string
+          description: The bitmap encoding these slots index into.
+          examples: ['gar-bitmap-v1-lsb']
+        gateways:
+          type: array
+          description: '`gateways[i]` is the gateway address at bit `i`.'
+          items: { type: string }
 
     Health:
       type: object

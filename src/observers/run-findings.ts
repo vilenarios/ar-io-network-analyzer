@@ -27,6 +27,7 @@ import {
   listFindings,
   upsertFindings,
   listChainEpochs,
+  getRegistrySnapshot,
 } from '../db/repo-read.js';
 import { buildEconomicsDocument } from '../economics/document.js';
 import { readEconomicsInputsFromSummary } from '../economics/inputs.js';
@@ -45,7 +46,7 @@ import {
   GATEWAY_DEPENDENT_KINDS,
   WINDOW_DETECTORS,
 } from './detectors/index.js';
-import { buildUnobservedEpochDocument, buildEpochDocument, buildFindingsDocument, buildObserversDocument } from './documents.js';
+import { buildRegistryDocument, buildUnobservedEpochDocument, buildEpochDocument, buildFindingsDocument, buildObserversDocument } from './documents.js';
 import { capSeverity, makeFinding } from './finding.js';
 import { publishDocuments } from '../publish/publish.js';
 import { loadGatewayRoster } from './roster.js';
@@ -361,6 +362,16 @@ async function main(): Promise<void> {
         new Date().toISOString(),
         deriveOperatorRewards(db)
       ),
+      // The slot order for every epoch that has a snapshot — the key that makes
+      // each observation's verdict bitmap resolvable to gateway addresses.
+      // Published for approximate snapshots too, flagged as such, because
+      // "this order is not reliable for this epoch" is itself worth stating.
+      registryDocs: [...chainEpochs.keys()]
+        .sort((a, b) => a - b)
+        .flatMap((epochIndex) => {
+          const snapshot = getRegistrySnapshot(db, epochIndex);
+          return snapshot ? [{ epochIndex, doc: buildRegistryDocument(snapshot) }] : [];
+        }),
       epochDocs: [
         ...epochs.map((epoch) => ({
           epochIndex: epoch.epochIndex,
