@@ -85,6 +85,13 @@ export interface Manifest {
     economics?: DocumentEntry;
   rewards?: DocumentEntry;
     epochs?: Array<DocumentEntry & { epochIndex: number }>;
+    /**
+     * Per-epoch gateway registry slot order — the key that turns an
+     * observation's `gatewayResultsBase64` bitmap into gateway addresses.
+     * Listed so consumers can discover it; the portal will not request a
+     * document absent from this map.
+     */
+    registry?: Array<DocumentEntry & { epochIndex: number }>;
   };
   freshness: {
     analysisGeneratedAt: string | null;
@@ -276,6 +283,57 @@ export interface EpochDocument {
     lastSeenAt: string;
   }>;
   findings: PublishedFinding[];
+}
+
+/**
+ * The gateway registry slot order for one epoch.
+ *
+ * This is the missing key to every observation's verdict bitmap.
+ * `gatewayResultsBase64` is a bitmap indexed by gateway registry SLOT, not by
+ * gateway address — so without this document a consumer can count how many
+ * gateways an observer failed but cannot name a single one of them, and cannot
+ * ask the reverse question ("who failed gateway X in epoch N") at all.
+ *
+ * `gateways[i]` is the gateway at bit `i`. Decode with the encoding named by
+ * the observation's `gatewayResultsEncoding` (`gar-bitmap-v1-lsb`): bit `i` is
+ * byte `i >> 3` of the decoded blob, shifted right by `i & 7`, masked with 1.
+ * Only the first `gatewayResultsMeaningfulBytes` of the blob carry verdicts.
+ *
+ * POLARITY, AND GET IT RIGHT: a SET bit (1) means the observer found the
+ * gateway HEALTHY. A CLEARED bit (0) is the failure. So
+ * `failed = ((blob[i >> 3] >> (i & 7)) & 1) === 0`. Inverting this reports
+ * every passing gateway as failing, which is worse than publishing nothing.
+ * Confirmed two ways: ../observers/hamming.ts documents `0 = failed`, and the
+ * chain's own per-slot `failure_counts` for epoch 559 equals the CLEARED-bit
+ * count across observers for all 553 slots (and the set-bit count for none).
+ *
+ * ONLY TRUST THIS WHEN `inEpoch` IS TRUE. A snapshot taken after the epoch
+ * closed is the CURRENT slot order wearing a past epoch's label: any gateway
+ * that joined or left since shifts every slot after it, so bit `i` may not name
+ * `gateways[i]`. Such epochs publish `approximate: true`, and the epoch
+ * document says the same via `registryApproximate`.
+ */
+export interface RegistryDocument {
+  schemaVersion: string;
+  generatedAt: string;
+  epochIndex: number;
+  /** Gateways in the registry when the snapshot was taken. */
+  gatewayCount: number;
+  /** Snapshotted while this epoch was live — the only decodable kind. */
+  inEpoch: boolean;
+  /** The inverse of `inEpoch`, named as consumers will think of it. */
+  approximate: boolean;
+  /** Matches `registryDigest` on the epoch document, so the pair is verifiable. */
+  digest: string;
+  /** Unix seconds, and the Solana slot, at which the order was captured. */
+  capturedAtUnix: number;
+  capturedAtSlot: number;
+  /** The registry account the order was read from. */
+  registryPubkey: string;
+  /** The bitmap encoding these slots index into. */
+  encoding: string;
+  /** `gateways[i]` is the gateway at bit `i`. */
+  gateways: string[];
 }
 
 export interface PublishedFinding {

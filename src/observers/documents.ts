@@ -12,6 +12,7 @@ import {
   dateToIso,
   toPublishedFinding,
   type EpochDocument,
+  type RegistryDocument,
   type FindingsDocument,
   type ObserversDocument,
 } from '../publish/contract.js';
@@ -19,7 +20,13 @@ import { captureState, isWindowClosed } from './capture-state.js';
 import type { ChainEpochFacts } from '../db/repo-read.js';
 import { meaningfulBytes } from './hamming.js';
 import { countFindings, rankFindings, summarizeObservers } from './rollup.js';
-import type { DetectorConfig, EpochSnapshot, Finding, GatewayFacts } from './types.js';
+import type {
+  DetectorConfig,
+  EpochSnapshot,
+  Finding,
+  GatewayFacts,
+  RegistrySnapshot,
+} from './types.js';
 
 function epochRange(epochs: EpochSnapshot[]) {
   if (epochs.length === 0) return null;
@@ -133,6 +140,32 @@ export function buildUnobservedEpochDocument(
     findings: findings
       .filter((finding) => finding.epochIndex === chain.epochIndex)
       .map(toPublishedFinding),
+  };
+}
+
+/**
+ * Publish one epoch's registry slot order.
+ *
+ * The snapshot already carries `slots[i] = gateway at bit i`; this is a
+ * projection, not a computation. It exists because that array was never
+ * published: the verdict bitmaps went out verbatim alongside a
+ * `registryDigest` to verify the key against, and the key itself stayed on the
+ * box.
+ */
+export function buildRegistryDocument(snapshot: RegistrySnapshot): RegistryDocument {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    generatedAt: new Date().toISOString(),
+    epochIndex: snapshot.epochIndex,
+    gatewayCount: snapshot.gatewayCount,
+    inEpoch: snapshot.inEpoch,
+    approximate: !snapshot.inEpoch,
+    digest: snapshot.digest,
+    capturedAtUnix: snapshot.capturedAt,
+    capturedAtSlot: snapshot.capturedAtSlot,
+    registryPubkey: snapshot.registryPubkey,
+    encoding: GATEWAY_RESULTS_ENCODING,
+    gateways: snapshot.slots,
   };
 }
 
