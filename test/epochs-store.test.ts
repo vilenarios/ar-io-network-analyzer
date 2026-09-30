@@ -18,6 +18,7 @@
  */
 
 import test from 'node:test';
+import { EMPTY_EPOCH_EXTRAS } from '../src/capture/epoch-extras.js';
 import assert from 'node:assert/strict';
 import {
   epochsMissingCreator,
@@ -60,7 +61,7 @@ function epochAccount(overrides: Partial<SdkEpoch> = {}, pubkey = 'EpochPda111')
     ...overrides,
   };
 
-  return { pubkey, accountBytes: 9408, epoch };
+  return { pubkey, accountBytes: 9408, epoch, extras: EMPTY_EPOCH_EXTRAS };
 }
 
 function readEpoch(db: ReturnType<typeof memoryDb>, epochIndex = 511) {

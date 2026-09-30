@@ -1560,6 +1560,59 @@ components:
                 Observers the chain's `has_observed` bitmap marks as having
                 reported. Zero alongside `observationsSubmitted: 0` is the
                 protocol stating plainly that nobody reported.
+            totalCompositeWeight:
+              type: [string, 'null']
+              description: |
+                Total composite weight for the epoch, as a DECIMAL STRING. It is
+                a u128 on chain, so it has no JSON number representation —
+                **parse it as a bigint, not a float.**
+
+                This is the denominator for a gateway's weighted reward share;
+                per-gateway `compositeWeight` is in
+                `/api/v1/portal/gateways.json`.
+            hashchain:
+              type: [string, 'null']
+              description: |
+                32 bytes of frozen epoch entropy, hex-encoded. Together with the
+                epoch's registry slot order
+                (`/api/v1/registry/{epochIndex}.json`) this is what the AR.IO
+                SDK's `predictPrescribedObservers` needs to **verify** the
+                protocol's observer selection independently, rather than
+                trusting the prescribed list.
+            observationsClosed:
+              type: [boolean, 'null']
+              description: |
+                Whether the protocol's epoch-closing step has been EXECUTED.
+
+                **This is not the same as "the window has elapsed."** Epochs
+                observed on 2026-09-30 had ended days earlier and still reported
+                `false`, because nothing had cranked them closed. Treat `true`
+                as proof the window is shut, and an elapsed
+                `endTimestampUnix` as independently sufficient — that is how
+                `capture` is derived.
+            layoutVersion:
+              type: [string, 'null']
+              description: |
+                Epoch account layout version, `major.minor.patch`. A change here
+                means decoders need review; it is the drift canary for a
+                contract upgrade.
+        failureCounts:
+          type: [array, 'null']
+          description: |
+            The protocol's OWN per-slot failure tally, aligned to the same
+            registry slot order as every observation's bitmap — so
+            `failureCounts[i]` describes the gateway at `gateways[i]` in
+            `/api/v1/registry/{epochIndex}.json`.
+
+            **Use it to validate your decoder.** For any slot `i`, the number of
+            observations whose bit `i` is CLEARED must equal
+            `failureCounts[i]`. A decoder that inverts the polarity fails this
+            check immediately — which is how an inverted reading was caught
+            before it shipped.
+
+            Truncated to the epoch's gateway count; the on-chain array is a
+            fixed 3000 entries and the tail is padding.
+          items: { type: integer }
         observations:
           type: array
           items: { $ref: '#/components/schemas/Observation' }

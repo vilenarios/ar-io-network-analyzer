@@ -266,6 +266,7 @@ export function upsertEpochs(
        distribution_index, tally_index,
        failure_counts, has_observed,
        prescribed_observers, prescribed_observer_gateways, prescribed_name_hashes,
+       total_composite_weight, hashchain, observations_closed, layout_version,
        account_bytes, first_seen_at, last_seen_at, first_seen_slot, last_seen_slot, pubkey
      ) VALUES (
        @epochIndex, @startTimestamp, @endTimestamp,
@@ -275,6 +276,7 @@ export function upsertEpochs(
        @distributionIndex, @tallyIndex,
        @failureCounts, @hasObserved,
        @prescribedObservers, @prescribedObserverGateways, @prescribedNameHashes,
+       @totalCompositeWeight, @hashchain, @observationsClosed, @layoutVersion,
        @accountBytes, @seenAt, @seenAt, @seenSlot, @seenSlot, @pubkey
      )
      ON CONFLICT(epoch_index) DO UPDATE SET
@@ -298,6 +300,13 @@ export function upsertEpochs(
        prescribed_observers         = excluded.prescribed_observers,
        prescribed_observer_gateways = excluded.prescribed_observer_gateways,
        prescribed_name_hashes       = excluded.prescribed_name_hashes,
+       -- COALESCE, not a plain overwrite: if a later poll decodes these as null
+       -- (decoder swapped, layout drifted) it must not erase a good earlier
+       -- read. These are unrecoverable once the epoch closes.
+       total_composite_weight       = COALESCE(excluded.total_composite_weight, epochs.total_composite_weight),
+       hashchain                    = COALESCE(excluded.hashchain, epochs.hashchain),
+       observations_closed          = COALESCE(excluded.observations_closed, epochs.observations_closed),
+       layout_version               = COALESCE(excluded.layout_version, epochs.layout_version),
        account_bytes                = excluded.account_bytes,
        pubkey                       = excluded.pubkey,
        last_seen_at                 = excluded.last_seen_at,
@@ -328,6 +337,11 @@ export function upsertEpochs(
       prescriptionsDone: epoch.prescriptionsDone,
       distributionIndex: epoch.distributionIndex,
       tallyIndex: epoch.tallyIndex,
+      totalCompositeWeight: record.extras.totalCompositeWeight,
+      hashchain: record.extras.hashchain,
+      observationsClosed:
+        record.extras.observationsClosed === null ? null : record.extras.observationsClosed ? 1 : 0,
+      layoutVersion: record.extras.version,
       failureCounts: Buffer.from(
         epoch.failureCounts.buffer,
         epoch.failureCounts.byteOffset,

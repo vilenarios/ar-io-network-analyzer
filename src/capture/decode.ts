@@ -16,6 +16,7 @@
 
 import { createHash } from 'crypto';
 import type { DecodedObservation } from '../observers/types.js';
+import { decodeEpochExtras, type EpochExtras } from './epoch-extras.js';
 import {
   OBSERVATION_ACCOUNT_BYTES,
   OBSERVATION_DISCRIMINATOR_B64,
@@ -230,6 +231,11 @@ export interface DecodedEpoch {
   pubkey: string;
   accountBytes: number;
   epoch: SdkEpoch;
+  /**
+   * The fields `deserializeEpoch()` drops. Decoded separately through the raw
+   * Codama decoder — see ./epoch-extras.ts for why they are kept apart.
+   */
+  extras: EpochExtras;
 }
 
 export type EpochDecodeOutcome =
@@ -267,6 +273,9 @@ export function decodeEpochAccount(account: RawObservationAccount): EpochDecodeO
       pubkey: account.pubkey,
       accountBytes: account.data.length,
       epoch,
+      // Own try/catch inside: a failure here yields nulls, never a failed
+      // epoch decode. The 21 SDK fields above must keep flowing.
+      extras: decodeEpochExtras(account.data),
     },
   };
 }

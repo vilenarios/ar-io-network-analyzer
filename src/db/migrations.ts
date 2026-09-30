@@ -450,8 +450,37 @@ export const MIGRATIONS: Migration[] = [
          PRIMARY KEY (epoch_index, kind, address, gateway_address, instruction)
        )`,
     ],
-  }
+  },
 
+  {
+    version: 10,
+    name: 'epoch-fields-the-sdk-drops',
+    statements: [
+      // `deserializeEpoch()` in @ar.io/sdk returns 21 of the account's 29
+      // fields. Capture decodes through the SDK, so these four were never
+      // stored -- and they are unrecoverable once an epoch closes, because
+      // `close_epoch` is permissionless and reclaims the account. 44 of 53
+      // known epochs had already lost them by the time this landed.
+      //
+      // TEXT for the weight: it is a u128 on chain (two u64 halves), which does
+      // not fit a JS number and has no JSON representation. Carried as a decimal
+      // string end to end rather than losing precision at 2^53.
+      `ALTER TABLE epochs ADD COLUMN total_composite_weight TEXT`,
+      // 32 bytes of frozen entropy. With the registry slot order (published
+      // since #18) this is what `predictPrescribedObservers` needs to verify the
+      // protocol's observer selection independently, rather than trusting the
+      // `prescribed_observers` list it also publishes.
+      `ALTER TABLE epochs ADD COLUMN hashchain BLOB`,
+      // The protocol's own statement that the window is shut. Replaces inferring
+      // it from `end_timestamp` vs wall clock, and catches a window that closes
+      // off-schedule.
+      `ALTER TABLE epochs ADD COLUMN observations_closed INTEGER`,
+      // Account layout version: a drift canary. When the contracts were upgraded
+      // on 2026-09-29 the decoders had to be verified by hand; this makes the
+      // next one observable.
+      `ALTER TABLE epochs ADD COLUMN layout_version TEXT`,
+    ],
+  },
 ];
 
 /**

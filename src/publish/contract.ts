@@ -264,7 +264,43 @@ export interface EpochDocument {
     observationsSubmitted: number | null;
     activeGatewayCount: number | null;
     hasObservedCount: number | null;
+    /**
+     * Total composite weight for the epoch, as a DECIMAL STRING. A u128 on
+     * chain, so it has no JSON number representation — parse it as a bigint,
+     * not a float. The denominator for a gateway's weighted reward share;
+     * per-gateway `compositeWeight` is in the portal's gateways document.
+     */
+    totalCompositeWeight: string | null;
+    /**
+     * 32 bytes of frozen entropy, hex. Together with the epoch's registry slot
+     * order (/api/v1/registry/{epochIndex}.json) this is what the SDK's
+     * `predictPrescribedObservers` needs to VERIFY the protocol's observer
+     * selection, rather than trusting the prescribed list.
+     */
+    hashchain: string | null;
+    /**
+     * The protocol's own statement that the observation window is shut. More
+     * authoritative than comparing `endTimestampUnix` to the clock, which is
+     * what `capture` still falls back on when this is null.
+     */
+    observationsClosed: boolean | null;
+    /** Account layout version. A change here means decoders need review. */
+    layoutVersion: string | null;
   } | null;
+  /**
+   * The protocol's OWN per-slot failure tally, aligned to the same registry
+   * slot order as every observation's bitmap — so `failureCounts[i]` describes
+   * the gateway at `gateways[i]` in /api/v1/registry/{epochIndex}.json.
+   *
+   * Publish-side cross-check, and the reason this is worth carrying: the number
+   * of observers whose bit `i` is CLEARED must equal `failureCounts[i]`. A
+   * decoder that inverts the polarity fails that check immediately. It is how
+   * an inverted reading was caught before it shipped.
+   *
+   * Truncated to the epoch's gateway count; the on-chain array is a fixed 3000
+   * entries and the tail is padding.
+   */
+  failureCounts: number[] | null;
   observations: Array<{
     observer: string;
     pubkey: string;

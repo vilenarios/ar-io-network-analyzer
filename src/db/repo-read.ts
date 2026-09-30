@@ -85,6 +85,36 @@ export interface ChainEpochFacts {
    * the protocol stating plainly that nobody reported.
    */
   hasObservedCount: number | null;
+  /** u128 as a decimal string — see ../capture/epoch-extras.ts. */
+  totalCompositeWeight: string | null;
+  /** Hex. Frozen entropy prescribed observers derive from. */
+  hashchain: string | null;
+  /** The protocol's own statement that the window is shut. */
+  observationsClosed: boolean | null;
+  /** Account layout version, a drift canary. */
+  layoutVersion: string | null;
+  /**
+   * The protocol's per-slot failure tally, aligned to the SAME registry slot
+   * order as an observation's bitmap. Truncated to the epoch's gateway count:
+   * the on-chain array is a fixed 3000 entries and the tail is padding.
+   */
+  failureCounts: number[] | null;
+}
+
+/**
+ * Read the per-slot failure tally: a little-endian Uint16Array on chain.
+ *
+ * Truncated to `gatewayCount` because the array is a fixed 3000 entries and the
+ * tail is padding — publishing the padding would read as 2,447 gateways with
+ * zero failures.
+ */
+function decodeFailureCounts(blob: Buffer | null, gatewayCount: number | null): number[] | null {
+  if (!blob) return null;
+  const available = Math.floor(blob.length / 2);
+  const limit = gatewayCount === null ? available : Math.min(gatewayCount, available);
+  const out: number[] = [];
+  for (let i = 0; i < limit; i++) out.push(blob.readUInt16LE(i * 2));
+  return out;
 }
 
 /** Count set bits in the 7-byte LSB-first `has_observed` bitmap. */
@@ -120,10 +150,16 @@ export function listChainEpochs(db: Database): Map<number, ChainEpochFacts> {
         observations_submitted: number | null;
         active_gateway_count: number | null;
         has_observed: Buffer | null;
+        total_composite_weight: string | null;
+        hashchain: Buffer | null;
+        observations_closed: number | null;
+        layout_version: string | null;
+        failure_counts: Buffer | null;
       }
     >(
       `SELECT epoch_index, end_timestamp, observer_count, observations_submitted,
-              active_gateway_count, has_observed
+              active_gateway_count, has_observed, total_composite_weight, hashchain,
+              observations_closed, layout_version, failure_counts
          FROM epochs
         ORDER BY epoch_index ASC`
     )
@@ -139,6 +175,11 @@ export function listChainEpochs(db: Database): Map<number, ChainEpochFacts> {
         observationsSubmitted: r.observations_submitted,
         activeGatewayCount: r.active_gateway_count,
         hasObservedCount: countSetBits(r.has_observed),
+        totalCompositeWeight: r.total_composite_weight,
+        hashchain: r.hashchain ? r.hashchain.toString('hex') : null,
+        observationsClosed: r.observations_closed === null ? null : r.observations_closed === 1,
+        layoutVersion: r.layout_version,
+        failureCounts: decodeFailureCounts(r.failure_counts, r.active_gateway_count),
       },
     ])
   );
