@@ -56,9 +56,10 @@ export function buildEpochDocument(
     capture: captureState(
       epoch.observations.length,
       chain?.observationsSubmitted ?? null,
-      isWindowClosed(chain?.endTimestamp ?? null)
+      windowClosed(chain)
     ),
     chain: toPublishedChain(chain),
+    failureCounts: chain?.failureCounts ?? null,
     observations: epoch.observations.map((observation) => ({
       observer: observation.observer,
       pubkey: observation.pubkey,
@@ -84,6 +85,28 @@ export function buildEpochDocument(
   };
 }
 
+/**
+ * Is the epoch's observation window shut?
+ *
+ * EITHER signal is sufficient, and that asymmetry is load-bearing.
+ *
+ * `observations_closed` does NOT mean "the window has elapsed" — it means the
+ * protocol's closing step has been EXECUTED. Measured on chain 2026-09-30:
+ * epochs 553 and 554 ended on the 23rd and 24th and still reported
+ * `observationsClosed: false`, because nothing had cranked them closed; only
+ * epoch 533 reported true. Treating the flag as authoritative would mark those
+ * epochs `unknown` indefinitely and undo the work that made them `complete`.
+ *
+ * So: the flag is a positive signal (closed means closed), and an elapsed end
+ * timestamp is independently sufficient. Only when neither holds — a live
+ * epoch — is completeness unknowable.
+ */
+function windowClosed(chain: ChainEpochFacts | null): boolean | null {
+  if (!chain) return null;
+  if (chain.observationsClosed === true) return true;
+  return isWindowClosed(chain.endTimestamp);
+}
+
 /** Project chain facts into the document shape, dropping the redundant index. */
 function toPublishedChain(chain: ChainEpochFacts | null): EpochDocument['chain'] {
   if (!chain) return null;
@@ -95,6 +118,10 @@ function toPublishedChain(chain: ChainEpochFacts | null): EpochDocument['chain']
     observationsSubmitted: chain.observationsSubmitted,
     activeGatewayCount: chain.activeGatewayCount,
     hasObservedCount: chain.hasObservedCount,
+    totalCompositeWeight: chain.totalCompositeWeight,
+    hashchain: chain.hashchain,
+    observationsClosed: chain.observationsClosed,
+    layoutVersion: chain.layoutVersion,
   };
 }
 
@@ -133,9 +160,10 @@ export function buildUnobservedEpochDocument(
     capture: captureState(
       0,
       chain.observationsSubmitted,
-      isWindowClosed(chain.endTimestamp)
+      windowClosed(chain)
     ),
     chain: toPublishedChain(chain),
+    failureCounts: chain.failureCounts,
     observations: [],
     findings: findings
       .filter((finding) => finding.epochIndex === chain.epochIndex)

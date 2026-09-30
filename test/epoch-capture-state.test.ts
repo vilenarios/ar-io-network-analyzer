@@ -34,6 +34,11 @@ const CLOSED_END = Math.floor(Date.parse('2026-09-25T00:04:10Z') / 1000);
 const chainFacts = (over: Partial<ChainEpochFacts> = {}): ChainEpochFacts => ({
   epochIndex: 554,
   endTimestamp: CLOSED_END,
+  totalCompositeWeight: null,
+  hashchain: null,
+  observationsClosed: null,
+  layoutVersion: null,
+  failureCounts: null,
   observerCount: 50,
   observationsSubmitted: 0,
   activeGatewayCount: 580,
@@ -95,6 +100,10 @@ test('a provably quiet epoch publishes an empty but complete document', () => {
   // trusting it.
   assert.deepEqual(doc.chain, {
     endTimestampUnix: CLOSED_END,
+    totalCompositeWeight: null,
+    hashchain: null,
+    observationsClosed: null,
+    layoutVersion: null,
     observerCount: 50,
     observationsSubmitted: 0,
     activeGatewayCount: 580,
@@ -207,6 +216,53 @@ test('the live epoch publishes as unknown with its end timestamp exposed', () =>
     (doc.chain?.endTimestampUnix ?? 0) * 1000 > Date.now(),
     'a future end timestamp is what marks it live',
   );
+});
+
+test('a closed-step flag of false does not override an elapsed window', () => {
+  // Measured on chain 2026-09-30: epochs 553 and 554 ended days earlier and
+  // still reported observationsClosed:false, because nothing had cranked them
+  // closed. Letting the flag win would mark them `unknown` forever.
+  const doc = buildUnobservedEpochDocument(
+    chainFacts({ epochIndex: 554, observationsClosed: false, endTimestamp: CLOSED_END }),
+    [],
+  );
+  assert.equal(doc.capture, 'complete');
+});
+
+test('the closed-step flag alone can close a window', () => {
+  // The flag is a positive signal: if the protocol says closed, it is closed,
+  // even with an end timestamp still in the future.
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  const doc = buildUnobservedEpochDocument(
+    chainFacts({ observationsClosed: true, endTimestamp: future }),
+    [],
+  );
+  assert.equal(doc.capture, 'complete');
+});
+
+test('neither signal closed means the epoch is live and unknown', () => {
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  const doc = buildUnobservedEpochDocument(
+    chainFacts({ epochIndex: 560, observationsClosed: false, endTimestamp: future }),
+    [],
+  );
+  assert.equal(doc.capture, 'unknown');
+});
+
+test('the new chain fields reach the document', () => {
+  const doc = buildUnobservedEpochDocument(
+    chainFacts({
+      totalCompositeWeight: '1797819500',
+      hashchain: '80c8f132c34b0b1d',
+      layoutVersion: '1.0.0',
+      failureCounts: [1, 0, 2],
+    }),
+    [],
+  );
+  assert.equal(doc.chain?.totalCompositeWeight, '1797819500');
+  assert.equal(doc.chain?.hashchain, '80c8f132c34b0b1d');
+  assert.equal(doc.chain?.layoutVersion, '1.0.0');
+  assert.deepEqual(doc.failureCounts, [1, 0, 2]);
 });
 
 test('a null chain block yields unknown rather than a false complete', () => {

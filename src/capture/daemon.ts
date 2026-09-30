@@ -42,6 +42,7 @@ import {
   loadSdkDecoder,
   type DecodedEpoch,
 } from './decode.js';
+import { loadEpochExtrasDecoder } from './epoch-extras.js';
 import {
   createRpcClient,
   fetchDiscriminatorOnlyCount,
@@ -538,6 +539,9 @@ async function main(): Promise<void> {
   // quiet network. Refuse to start rather than capture silence.
   await assertDiscriminatorMatchesSdk();
   await loadSdkDecoder();
+  // Separate decoder for the fields the SDK projection drops. A failure to
+  // load leaves them null rather than stopping capture.
+  await loadEpochExtrasDecoder().catch(() => undefined);
 
   // If the database cannot be opened, exit non-zero: a capture daemon that
   // cannot persist is worse than a dead one — the supervisor will restart it
