@@ -19,13 +19,21 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureState, isProvablyUnobserved } from '../src/observers/capture-state.js';
+import {
+  captureState,
+  isProvablyUnobserved,
+  isWindowClosed,
+} from '../src/observers/capture-state.js';
 import { buildUnobservedEpochDocument } from '../src/observers/documents.js';
 import { SCHEMA_VERSION } from '../src/publish/contract.js';
 import type { ChainEpochFacts } from '../src/db/repo-read.js';
 
+/** Epoch 554's real window: 2026-09-24, long closed. */
+const CLOSED_END = Math.floor(Date.parse('2026-09-25T00:04:10Z') / 1000);
+
 const chainFacts = (over: Partial<ChainEpochFacts> = {}): ChainEpochFacts => ({
   epochIndex: 554,
+  endTimestamp: CLOSED_END,
   observerCount: 50,
   observationsSubmitted: 0,
   activeGatewayCount: 580,
@@ -86,6 +94,7 @@ test('a provably quiet epoch publishes an empty but complete document', () => {
   // The chain block is what lets a consumer verify `capture` instead of
   // trusting it.
   assert.deepEqual(doc.chain, {
+    endTimestampUnix: CLOSED_END,
     observerCount: 50,
     observationsSubmitted: 0,
     activeGatewayCount: 580,
@@ -151,6 +160,52 @@ test('findings for the epoch are still attached, and others are not', () => {
   assert.deepEqual(
     doc.findings.map((f) => f.id),
     ['mine'],
+  );
+});
+
+// --- the live epoch ---------------------------------------------------------
+
+test('isWindowClosed compares against the epoch end, not a guess at length', () => {
+  const end = 1_759_190_650; // 2026-09-30T00:04:10Z
+  assert.equal(isWindowClosed(end, (end - 60) * 1000), false, 'a minute before close');
+  assert.equal(isWindowClosed(end, end * 1000), true, 'exactly at close');
+  assert.equal(isWindowClosed(end, (end + 60) * 1000), true, 'after close');
+  assert.equal(isWindowClosed(null, Date.now()), null, 'no end timestamp is not a guess');
+});
+
+test('a still-running epoch is unknown, never complete', () => {
+  // The bug this guards: epoch 560 was 46 minutes into a 24-hour window with 0
+  // observations, and captureState(0, 0) said `complete` — publishing "nobody
+  // reported" about an epoch nobody had had time to report on.
+  assert.equal(captureState(0, 0, false), 'unknown');
+  assert.equal(captureState(34, 34, false), 'unknown', 'also while reports are arriving');
+  assert.equal(captureState(0, 10, false), 'unknown', 'a live epoch is not yet "missing"');
+});
+
+test('an unknown window is unknown, not an assumption either way', () => {
+  assert.equal(captureState(0, 0, null), 'unknown');
+});
+
+test('a closed window still judges exactly as before', () => {
+  assert.equal(captureState(0, 0, true), 'complete');
+  assert.equal(captureState(0, 10, true), 'missing');
+  assert.equal(captureState(16, 18, true), 'partial');
+});
+
+test('the live epoch publishes as unknown with its end timestamp exposed', () => {
+  // A consumer must be able to tell "unknown because running" from "unknown
+  // because no tally", so the end timestamp rides along in `chain`.
+  const future = Math.floor(Date.now() / 1000) + 3600;
+  const doc = buildUnobservedEpochDocument(
+    chainFacts({ epochIndex: 560, endTimestamp: future }),
+    [],
+  );
+  assert.equal(doc.capture, 'unknown');
+  assert.deepEqual(doc.observations, []);
+  assert.equal(doc.chain?.endTimestampUnix, future);
+  assert.ok(
+    (doc.chain?.endTimestampUnix ?? 0) * 1000 > Date.now(),
+    'a future end timestamp is what marks it live',
   );
 });
 

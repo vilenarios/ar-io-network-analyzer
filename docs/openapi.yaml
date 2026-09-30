@@ -1459,7 +1459,14 @@ components:
             - `complete` — we hold everything the chain counted, including 0 of 0
             - `partial` — we hold some, but fewer than the chain counted
             - `missing` — the chain counted submissions and we hold none
-            - `unknown` — no chain-side count captured; completeness unknowable
+            - `unknown` — completeness not knowable: either no chain-side
+              count was captured, or **the epoch is still running**
+
+            The current epoch is always `unknown`. It begins with zero
+            observations because nobody has reported yet, and publishing that as
+            `complete` would assert "nobody reported" about an epoch minutes
+            old. Compare `chain.endTimestampUnix` against the current time to
+            tell a live epoch from a missing tally.
 
             An empty `observations` array with `complete` means nobody reported
             that epoch. An empty array with `missing` means reports existed and
@@ -1472,6 +1479,12 @@ components:
             `capture` rather than trust it. null for epochs whose Epoch account
             was never captured.
           properties:
+            endTimestampUnix:
+              type: [integer, 'null']
+              description: |
+                Epoch end, unix seconds. A value in the future means the
+                observation window is still open, which is why `capture` is
+                `unknown`.
             observerCount:
               type: [integer, 'null']
               description: Prescribed observers for the epoch (50 on mainnet today).

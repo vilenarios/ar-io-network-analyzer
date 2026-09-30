@@ -39,19 +39,51 @@ export type CaptureState =
  * field is absent — that yields `unknown` rather than a guess, because claiming
  * completeness we cannot verify is the failure this whole field exists to stop.
  *
+ * A `windowClosed` that is not `true` — false, or null when no end timestamp
+ * was captured — yields `unknown` for the same reason, and it is the
+ * case that matters most in practice: the CURRENT epoch always starts with zero
+ * observations because nobody has reported yet. Judging that `complete` would
+ * publish "nobody reported" about an epoch a few minutes old, every day, for
+ * the hours before the first report lands. Completeness is simply not knowable
+ * until the window shuts.
+ *
  * A count HIGHER than the chain's is reported as `complete`, not as an error:
- * `observations_submitted` is a running tally on a live epoch, so a capture
- * taken later in the epoch legitimately holds more than an earlier read of the
- * counter. Under-reporting is the direction that loses data.
+ * `observations_submitted` is a running tally, so a capture taken later than a
+ * read of the counter legitimately holds more. Under-reporting is the direction
+ * that loses data.
  */
 export function captureState(
   observationCount: number,
   chainSubmitted: number | null,
+  windowClosed: boolean | null = true,
 ): CaptureState {
+  // `!== true`, not `=== false`: a null (no end timestamp captured) means we do
+  // not know whether the window has shut, and "complete" is exactly the claim
+  // we must not make without knowing.
+  if (windowClosed !== true) return 'unknown';
   if (chainSubmitted === null) return 'unknown';
   if (observationCount >= chainSubmitted) return 'complete';
   if (observationCount === 0) return 'missing';
   return 'partial';
+}
+
+/**
+ * Has the epoch's observation window shut?
+ *
+ * Derived from the Epoch account's own `end_timestamp` (unix seconds) rather
+ * than from wall-clock guesswork about epoch length. `null` when we have no end
+ * timestamp, which propagates to `unknown` instead of an assumption.
+ *
+ * The protocol also exposes an `observations_closed` flag, which would be the
+ * more direct signal; capture does not store it yet, so the timestamp is the
+ * honest approximation available today.
+ */
+export function isWindowClosed(
+  endTimestampUnix: number | null,
+  nowMs: number = Date.now(),
+): boolean | null {
+  if (endTimestampUnix === null) return null;
+  return nowMs >= endTimestampUnix * 1000;
 }
 
 /**
