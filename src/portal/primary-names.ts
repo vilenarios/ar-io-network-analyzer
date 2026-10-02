@@ -20,7 +20,7 @@
  * join looks identical to a genuinely smaller network.
  */
 
-import { deserializePrimaryName } from '@ar.io/sdk';
+import { deserializePrimaryName, splitPrimaryName } from '@ar.io/sdk';
 // Imported rather than derived. The Anchor discriminator is just
 // `sha256("account:PrimaryName")[0..8]` and computing it here would drop a
 // dependency — but a struct rename would then silently scan for accounts that
@@ -56,27 +56,33 @@ export interface PrimaryNameScan {
 }
 
 /**
- * The SDK's join key: an undername (`sub_name`) resolves through its base
- * name, anything else through itself.
+ * The join key: an undername (`sub_name`) resolves through its base name,
+ * anything else through itself.
  *
- * Kept byte-identical to `getPrimaryNames`' own `baseNameOf`, because this key
- * decides which ArNS record a name resolves to and a divergence would silently
- * repoint rows rather than fail.
+ * Delegates to the SDK's own `splitPrimaryName`, which encodes the contract's
+ * `splitn(2, '_')` rule — split on the FIRST underscore, so `a_b_c` is
+ * undername `a` of base `b_c`. Delegating rather than reimplementing is the
+ * point: this key decides which ArNS record a name resolves to, and a private
+ * copy is exactly how the two drifted apart before.
  *
- * NOTE that the SDK rule it mirrors is WRONG, and deliberately reproduced
- * anyway. The contract splits on the FIRST underscore (`splitn(2, '_')`), so
- * `a_b_c` is undername `a` of base `b_c`; this `parts.length === 2` check
- * returns `a` instead, and such a name silently fails its lookup. Fixed
- * upstream in ar-io/ar-io-sdk#733 via the shared `splitPrimaryName` helper.
- * Reproducing it here keeps this change a pure performance change with
- * bit-identical output — no name on mainnet or devnet carries two underscores
- * today, so nothing is affected either way. When the SDK fix ships and this
- * repo bumps `@ar.io/sdk`, the parity test (PORTAL_SDK_PARITY=1) will start
- * failing: adopt the corrected rule then, do not loosen the test.
+ * HISTORY, because the previous comment here argued the opposite. While
+ * `@ar.io/sdk` was pinned at 4.1.0-alpha.2 this function deliberately
+ * reproduced that version's BUGGY inline rule (`parts.length === 2`, which
+ * returns the undername rather than the base for two or more underscores) so
+ * the local join stayed bit-identical to the SDK call it replaced. ar-io-sdk#733
+ * fixed the SDK, and with the 4.5.0 bump there is no longer a buggy rule to
+ * mirror — so the mirror is gone and the shared helper is used instead.
+ *
+ * A note on the tripwire that was supposed to catch this: the parity test
+ * (PORTAL_SDK_PARITY=1) PASSED across the bump, because it compares real
+ * published output and no name on either cluster carries two underscores. It is
+ * data-dependent, not structural, so it would only have fired once someone
+ * registered such a name — by which time the analyzer would have been silently
+ * dropping it. Adopting the correct rule now is a no-op on today's data and
+ * removes the latent divergence.
  */
 export function baseNameOf(name: string): string {
-  const parts = name.toLowerCase().split('_');
-  return parts.length === 2 ? parts[1] : parts[0];
+  return splitPrimaryName(name).baseName;
 }
 
 /**
