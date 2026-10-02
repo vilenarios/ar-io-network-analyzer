@@ -51,8 +51,8 @@
   "author": "Vilenarios",
   "license": "MIT",
   "dependencies": {
-    "@ar.io/sdk": "4.1.0-alpha.2",
-    "@ar.io/solana-contracts": "1.0.1",
+    "@ar.io/sdk": "4.5.0",
+    "@ar.io/solana-contracts": "1.4.0",
     "@solana/kit": "^6.8.0",
     "better-sqlite3": "^11.5.0"
   },

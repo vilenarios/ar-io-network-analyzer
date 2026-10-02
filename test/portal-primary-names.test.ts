@@ -10,6 +10,7 @@
 import test from 'node:test';
 import { PRIMARY_NAME_DISCRIMINATOR } from '@ar.io/solana-contracts/core';
 import assert from 'node:assert/strict';
+import { splitPrimaryName } from '@ar.io/sdk';
 import {
   baseNameOf,
   buildProcessIdIndex,
@@ -33,11 +34,20 @@ test('baseNameOf lowercases, matching the PDA seed the SDK derives', () => {
   assert.equal(baseNameOf('Sub_Alice'), 'alice');
 });
 
-test('baseNameOf reproduces the SDK rule for 2+ underscores, bug included', () => {
-  // The contract says `a_b_c` is undername `a` of base `b_c`; the SDK's rule
-  // returns `a`. We mirror the SDK, not the contract, so this stays a pure
-  // performance change — see the note on baseNameOf and ar-io/ar-io-sdk#733.
-  assert.equal(baseNameOf('a_b_c'), 'a');
+test('baseNameOf splits on the FIRST underscore, as the contract does', () => {
+  // Was asserting 'a' while the SDK was pinned to a version with the buggy
+  // inline rule. The 4.5.0 bump brings the corrected `splitPrimaryName`, so
+  // `a_b_c` is undername `a` of base `b_c` and resolves through `b_c`.
+  assert.equal(baseNameOf('a_b_c'), 'b_c');
+  assert.equal(baseNameOf('x_y_z_w'), 'y_z_w');
+});
+
+test('baseNameOf agrees with the SDK helper it delegates to', () => {
+  // The guard that replaces the data-dependent parity tripwire: this one is
+  // structural and fails the moment a private copy drifts from the shared rule.
+  for (const n of ['alice', 'sub_alice', 'a_b_c', 'x_y_z_w', 'ALICE', 'Sub_Alice']) {
+    assert.equal(baseNameOf(n), splitPrimaryName(n).baseName, n);
+  }
 });
 
 test('buildProcessIdIndex skips records missing a name or a processId', () => {
